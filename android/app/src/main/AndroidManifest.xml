@@ -38,6 +38,7 @@
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="streamvault"/>
+        <data android:scheme="exp+streamvault"/>
       </intent-filter>
     </activity>
   </application>
