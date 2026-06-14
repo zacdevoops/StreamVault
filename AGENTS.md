@@ -58,11 +58,19 @@ npm run lint
 npx jest --passWithNoTests
 npx expo install --check
 
-# Backend
+# Backend — local LAN (simulator / same-network iPhone)
 source server/ytdlp-api/.venv/bin/activate
-uvicorn app:app --host 0.0.0.0 --port 8787
+uvicorn app:app --host 0.0.0.0 --port 8787 --app-dir server/ytdlp-api
 python3 -m py_compile server/ytdlp-api/app.py   # syntax check before PR
 curl http://localhost:8787/health                # health check
+
+# Backend — Cloudflare Tunnel (beta / remote iPhone)
+# --proxy-headers is REQUIRED: without it /resolve returns localhost URLs
+source server/ytdlp-api/.venv/bin/activate
+uvicorn app:app --host 0.0.0.0 --port 8787 --app-dir server/ytdlp-api --proxy-headers --forwarded-allow-ips='*'
+cloudflared tunnel --url http://localhost:8787 --no-autoupdate
+# Update .env: EXPO_PUBLIC_YTDLP_API_URL=https://<tunnel-subdomain>.trycloudflare.com
+# Then rebuild Metro: npx expo start --clear
 
 # Frontend (backend must be running)
 EXPO_PUBLIC_YTDLP_API_URL=http://localhost:8787 npx expo run:ios
