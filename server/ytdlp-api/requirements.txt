@@ -1,0 +1,4 @@
+fastapi==0.115.14
+uvicorn[standard]==0.30.6
+requests==2.32.3
+yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/refs/tags/2025.10.14.tar.gz

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- aps-environment removed for local free-account builds.
+         EAS Build (eas build --profile preview/production) re-adds this
+         entitlement automatically when signing with a paid Apple Developer
+         Program certificate that supports Push Notifications. -->
+  </dict>
+</plist>
