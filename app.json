@@ -26,8 +26,7 @@
           }
         },
         "NSLocalNetworkUsageDescription": "StreamVault connects to your local backend server to load video streams during development.",
-        "NSPhotoLibraryUsageDescription": "Save downloaded videos to your photo library",
-        "NSMicrophoneUsageDescription": "Use voice search to find videos and music",
+        "NSCameraUsageDescription": null,
         "UIBackgroundModes": [
           "audio",
           "fetch",
@@ -85,7 +84,6 @@
         }
       ],
       "expo-sqlite",
-      "expo-audio",
       "expo-asset",
       [
         "expo-build-properties",

@@ -62,14 +62,8 @@
         </dict>
       </dict>
     </dict>
-    <key>NSCameraUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your camera</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>StreamVault connects to your local backend server to load video streams during development.</string>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>Use voice search to find videos and music</string>
-    <key>NSPhotoLibraryUsageDescription</key>
-    <string>Save downloaded videos to your photo library</string>
     <key>NSUserActivityTypes</key>
     <array>
       <string>$(PRODUCT_BUNDLE_IDENTIFIER).expo.index_route</string>
