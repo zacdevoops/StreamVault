@@ -17,6 +17,7 @@ export interface FeatureFlags {
   showDownloadButton: boolean;
   downloadsEnabled: boolean;
   showOfflineTab: boolean;
+  backgroundPlaybackEnabled: boolean;
 }
 
 export interface RemoteConfigResult {
@@ -29,6 +30,7 @@ export const DEFAULT_FEATURE_FLAGS: FeatureFlags = {
   showDownloadButton: true,
   downloadsEnabled: true,
   showOfflineTab: true,
+  backgroundPlaybackEnabled: true,
 };
 
 const REMOTE_CONFIG_DEFAULTS = {
@@ -36,6 +38,7 @@ const REMOTE_CONFIG_DEFAULTS = {
   show_download_button: DEFAULT_FEATURE_FLAGS.showDownloadButton,
   downloads_enabled: DEFAULT_FEATURE_FLAGS.downloadsEnabled,
   show_offline_tab: DEFAULT_FEATURE_FLAGS.showOfflineTab,
+  background_playback_enabled: DEFAULT_FEATURE_FLAGS.backgroundPlaybackEnabled,
 } satisfies FirebaseRemoteConfigTypes.ConfigDefaults;
 
 let initializationPromise: Promise<FirebaseRemoteConfigTypes.Module> | null = null;
@@ -50,6 +53,7 @@ function readFlags(remoteConfig: FirebaseRemoteConfigTypes.Module): FeatureFlags
     showDownloadButton: getBoolean(remoteConfig, 'show_download_button'),
     downloadsEnabled: getBoolean(remoteConfig, 'downloads_enabled'),
     showOfflineTab: getBoolean(remoteConfig, 'show_offline_tab'),
+    backgroundPlaybackEnabled: getBoolean(remoteConfig, 'background_playback_enabled'),
   };
 }
 

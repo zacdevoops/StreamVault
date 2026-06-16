@@ -46,6 +46,7 @@ class GlobalVideoManager {
   private appStateSubscription: NativeEventSubscription | null = null;
   private loadingTimeout: ReturnType<typeof setTimeout> | null = null;
   private wasInterrupted = false;
+  private backgroundPlaybackEnabled = true;
 
   private constructor() {
     this.startAppStateListener();
@@ -66,8 +67,8 @@ class GlobalVideoManager {
     // The React provider owns the native player lifecycle; the singleton only commands it.
     this.player = player;
     this.player.timeUpdateEventInterval = 0.5;
-    this.player.staysActiveInBackground = true;
-    this.player.showNowPlayingNotification = true;
+    this.player.staysActiveInBackground = this.backgroundPlaybackEnabled;
+    this.player.showNowPlayingNotification = this.backgroundPlaybackEnabled;
     this.player.audioMixingMode = 'doNotMix';
     this.updateNowPlayingInfo(this.snapshot.currentTrack);
   }
@@ -102,6 +103,14 @@ class GlobalVideoManager {
     this.listeners.add(listener);
     listener(this.snapshot);
     return () => this.listeners.delete(listener);
+  }
+
+  setBackgroundPlaybackEnabled(enabled: boolean) {
+    this.backgroundPlaybackEnabled = enabled;
+    if (this.player) {
+      this.player.staysActiveInBackground = enabled;
+      this.player.showNowPlayingNotification = enabled;
+    }
   }
 
   async play(fileUri: string, track: Partial<GlobalVideoTrack> = {}) {
@@ -252,8 +261,8 @@ class GlobalVideoManager {
     // Expo-video maps VideoSource.metadata to MPNowPlayingInfoCenter on iOS.
     // Reasserting these flags on every track change keeps lock-screen title, artist, artwork,
     // progress, and remote play/pause/seek controls attached to the one reusable player.
-    player.showNowPlayingNotification = true;
-    player.staysActiveInBackground = true;
+    player.showNowPlayingNotification = this.backgroundPlaybackEnabled;
+    player.staysActiveInBackground = this.backgroundPlaybackEnabled;
     player.audioMixingMode = 'doNotMix';
   }
 
@@ -265,8 +274,13 @@ class GlobalVideoManager {
       this.appState = nextState;
 
       if (nextState === 'background' || nextState === 'inactive') {
-        // Background transitions must not pause local media; iOS will keep it alive via AVAudioSession.
-        this.updateNowPlayingInfo();
+        if (!this.backgroundPlaybackEnabled) {
+          this.safePause();
+          this.setSnapshot({ ...this.snapshot, isPlaying: false });
+        } else {
+          // Background transitions must not pause local media; iOS will keep it alive via AVAudioSession.
+          this.updateNowPlayingInfo();
+        }
         return;
       }
 

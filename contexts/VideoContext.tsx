@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import { useEventListener } from 'expo';
 import { useVideoPlayer, type VideoPlayer } from 'expo-video';
 import { globalVideoManager, type GlobalVideoSnapshot, type GlobalVideoTrack } from '@/services/GlobalVideoManager';
+import { useConfigStore } from '@/stores/configStore';
 
 type VideoContextValue = GlobalVideoSnapshot & {
   player: VideoPlayer;
@@ -17,6 +18,7 @@ const stop = globalVideoManager.stop.bind(globalVideoManager);
 
 export function VideoProvider({ children }: { children: React.ReactNode }) {
   const [snapshot, setSnapshot] = useState(globalVideoManager.getSnapshot());
+  const backgroundPlaybackEnabled = useConfigStore((state) => state.backgroundPlaybackEnabled);
   const player = useVideoPlayer(null, (p: VideoPlayer) => {
     // Keep this hook source null forever so React creates exactly one native player.
     p.timeUpdateEventInterval = 0.5;
@@ -39,6 +41,10 @@ export function VideoProvider({ children }: { children: React.ReactNode }) {
       globalVideoManager.unbindPlayer(player);
     };
   }, [player]);
+
+  useEffect(() => {
+    globalVideoManager.setBackgroundPlaybackEnabled(backgroundPlaybackEnabled);
+  }, [backgroundPlaybackEnabled]);
 
   useEffect(() => {
     return () => {
