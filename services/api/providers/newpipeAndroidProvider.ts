@@ -1,10 +1,14 @@
-import type { SearchParams, VideoDetail, VideoResult } from '@/types';
+import type { DownloadFormat, SearchParams, VideoDetail, VideoResult } from '@/types';
+import type { ResolvedDownloadStream } from '@/services/api/apiTypes';
 import {
   getFeed as getNativeFeed,
   getVideoDetail as getNativeVideoDetail,
   isStreamVaultNewPipeAvailable,
+  resolveDownloadStream as resolveNativeDownloadStream,
   searchVideos as searchNativeVideos,
 } from 'streamvault-newpipe';
+
+const NEWPIPE_DOWNLOAD_FORMATS = new Set<DownloadFormat>(['mp4_360p', 'mp4_720p']);
 
 export async function getVideoDetail(videoId: string): Promise<VideoDetail | null> {
   if (!isStreamVaultNewPipeAvailable()) {
@@ -57,5 +61,23 @@ export async function getCategoryFeed(category: string, region: string, limit: n
       console.warn('[newpipe] getCategoryFeed failed', error);
     }
     return [];
+  }
+}
+
+export async function resolveDownloadStream(
+  videoId: string,
+  format: DownloadFormat
+): Promise<ResolvedDownloadStream | null> {
+  if (!isStreamVaultNewPipeAvailable() || !NEWPIPE_DOWNLOAD_FORMATS.has(format)) {
+    return null;
+  }
+
+  try {
+    return await resolveNativeDownloadStream(videoId, format as 'mp4_360p' | 'mp4_720p');
+  } catch (error) {
+    if (__DEV__) {
+      console.warn('[newpipe] resolveDownloadStream failed', error);
+    }
+    return null;
   }
 }

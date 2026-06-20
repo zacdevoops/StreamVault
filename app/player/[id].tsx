@@ -103,6 +103,15 @@ function isLikelyAudioStream(stream: VideoStream): boolean {
   return hasAudioHint && !hasVideoCodec && streamHeight(stream) === 0;
 }
 
+function isProgressiveMuxedStream(stream: VideoStream): boolean {
+  if (!stream.url || isLikelyAudioStream(stream)) return false;
+  const url = stream.url.toLowerCase();
+  if (url.includes('.m3u8') || url.includes('.mpd')) return false;
+  const descriptor = [stream.type, stream.container, stream.encoding].join(' ').toLowerCase();
+  if (descriptor.includes('mpegurl') || descriptor.includes('dash')) return false;
+  return streamHeight(stream) > 0;
+}
+
 function selectFallbackStream(video: VideoDetail, format: DownloadFormat): VideoStream | null {
   if (isAudioFormat(format)) {
     const targetBitrate = format === 'mp3_128' ? 128_000 : 320_000;
@@ -117,16 +126,22 @@ function selectFallbackStream(video: VideoDetail, format: DownloadFormat): Video
   }
 
   const targetHeight = FORMAT_HEIGHT[format] ?? 720;
-  const videoStreams = [...video.formatStreams, ...video.adaptiveFormats]
-    .filter((stream) => stream.url)
-    .sort((a, b) => {
+  const muxedStreams = video.formatStreams.filter((stream) => isProgressiveMuxedStream(stream));
+  const candidates =
+    format === 'mp4_720p'
+      ? muxedStreams.filter((stream) => streamHeight(stream) === targetHeight)
+      : muxedStreams.filter((stream) => {
+          const height = streamHeight(stream);
+          return height > 0 && height <= targetHeight;
+        });
+
+  return (
+    candidates.sort((a, b) => {
       const aHeight = streamHeight(a);
       const bHeight = streamHeight(b);
-      const aPenalty = aHeight > targetHeight ? 10_000 + aHeight : targetHeight - aHeight;
-      const bPenalty = bHeight > targetHeight ? 10_000 + bHeight : targetHeight - bHeight;
-      return aPenalty - bPenalty;
-    });
-  return videoStreams[0] ?? null;
+      return bHeight - aHeight;
+    })[0] ?? null
+  );
 }
 
 function extensionForDownload(format: DownloadFormat, container?: string): string {
@@ -331,6 +346,7 @@ export default function PlayerScreen() {
       const backendStream = await resolveDownloadStream(video.videoId, format);
       const fallbackStream = backendStream ? null : selectFallbackStream(video, format);
       const streamUrl = backendStream?.url ?? fallbackStream?.url;
+      const downloadHeaders = backendStream?.headers ?? fallbackStream?.headers;
       const ext = extensionForDownload(format, backendStream?.ext ?? fallbackStream?.container);
       const fileName = `${video.videoId}_${format}.${ext}`;
       const dirUri = `${FileSystem.documentDirectory}StreamVault`;
@@ -376,7 +392,7 @@ export default function PlayerScreen() {
         const resumable = FileSystem.createDownloadResumable(
           streamUrl,
           filePath,
-          {},
+          downloadHeaders ? { headers: downloadHeaders } : {},
           ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
             if (!isMountedRef.current) return;
             if (totalBytesExpectedToWrite <= 0) return;

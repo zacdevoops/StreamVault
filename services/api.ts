@@ -10,7 +10,7 @@ import {
   VideoThumbnail,
 } from '@/types';
 import type { ResolvedDownloadStream } from './api/apiTypes';
-import { getVideoDetail as getNewPipeVideoDetail, getCategoryFeed as getNewPipeCategoryFeed, searchVideos as searchVideosFromNewPipe } from './api/providers/newpipeAndroidProvider';
+import { getVideoDetail as getNewPipeVideoDetail, getCategoryFeed as getNewPipeCategoryFeed, resolveDownloadStream as resolveDownloadStreamFromNewPipe, searchVideos as searchVideosFromNewPipe } from './api/providers/newpipeAndroidProvider';
 import {
   getPublicVideoDetail,
   getVideoDetail as getYtdlpVideoDetail,
@@ -981,6 +981,15 @@ export async function getRecommendedVideos(videoId: string, query = ''): Promise
 }
 
 export async function resolveDownloadStream(videoId: string, format: DownloadFormat): Promise<ResolvedDownloadStream | null> {
+  if (Platform.OS === 'android' && (format === 'mp4_360p' || format === 'mp4_720p')) {
+    const nativeStream = await resolveDownloadStreamFromNewPipe(videoId, format);
+    if (nativeStream) return nativeStream;
+  }
+
+  return resolveDownloadStreamFromBackend(videoId, format);
+}
+
+async function resolveDownloadStreamFromBackend(videoId: string, format: DownloadFormat): Promise<ResolvedDownloadStream | null> {
   for (const baseUrl of await getReachableYtdlpApiUrls()) {
     try {
       const res = await client.post<ResolvedDownloadStream>(

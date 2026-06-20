@@ -49,6 +49,20 @@ class StreamVaultNewPipeModule : Module() {
         throw CodedException("NEWPIPE_FEED_FAILED", error.message ?: "Feed failed.", error)
       }
     }
+
+    AsyncFunction("resolveDownloadStream") { videoId: String, format: String ->
+      val normalizedId = videoId.trim()
+      if (normalizedId.isEmpty()) {
+        return@AsyncFunction null
+      }
+
+      try {
+        return@AsyncFunction DownloadStreamMapper.resolve(normalizedId, format.trim())
+      } catch (error: Exception) {
+        Log.w(TAG, "resolveDownloadStream failed for $normalizedId format=$format", error)
+        return@AsyncFunction null
+      }
+    }
   }
 
   companion object {

@@ -1,3 +1,4 @@
+import type { ResolvedDownloadStream } from '@/services/api/apiTypes';
 import type { VideoDetail, VideoResult } from '@/types';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 
@@ -6,6 +7,7 @@ type StreamVaultNewPipeNativeModule = {
   getVideoDetail: (videoId: string) => Promise<VideoDetail>;
   searchVideos: (query: string, searchType: string, page: number) => Promise<VideoResult[]>;
   getFeed: (category: string, region: string, limit: number) => Promise<VideoResult[]>;
+  resolveDownloadStream: (videoId: string, format: string) => Promise<ResolvedDownloadStream | null>;
 };
 
 const NativeModule = requireOptionalNativeModule<StreamVaultNewPipeNativeModule>('StreamVaultNewPipe');
@@ -44,6 +46,16 @@ export async function getFeed(params: {
     throw new Error('StreamVaultNewPipe getFeed is unavailable.');
   }
   return NativeModule.getFeed(params.category, params.region, params.limit);
+}
+
+export async function resolveDownloadStream(
+  videoId: string,
+  format: 'mp4_360p' | 'mp4_720p'
+): Promise<ResolvedDownloadStream | null> {
+  if (!NativeModule?.resolveDownloadStream) {
+    return null;
+  }
+  return NativeModule.resolveDownloadStream(videoId, format);
 }
 
 export function isStreamVaultNewPipeAvailable(): boolean {
