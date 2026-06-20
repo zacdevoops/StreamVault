@@ -1,0 +1,25 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.streamvaultnewpipe'
+version = '0.0.1'
+
+android {
+  namespace "expo.modules.streamvaultnewpipe"
+  compileOptions {
+    coreLibraryDesugaringEnabled true
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+  defaultConfig {
+    versionCode 1
+    versionName "0.0.1"
+  }
+}
+
+dependencies {
+  coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.4'
+  implementation 'com.github.teamnewpipe:NewPipeExtractor:0.26.1'
+}

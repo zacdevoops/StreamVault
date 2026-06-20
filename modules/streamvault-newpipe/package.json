@@ -1,0 +1,12 @@
+{
+  "name": "streamvault-newpipe",
+  "version": "0.0.1",
+  "description": "Android-only NewPipeExtractor scaffold for StreamVault (Phase 0)",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {},
+  "peerDependencies": {
+    "expo": "*",
+    "expo-modules-core": "*"
+  }
+}
