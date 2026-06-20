@@ -1,4 +1,5 @@
 import { create, type AxiosInstance } from 'axios';
+import { Platform } from 'react-native';
 import {
   DownloadFormat,
   SearchParams,
@@ -8,6 +9,14 @@ import {
   VideoStream,
   VideoThumbnail,
 } from '@/types';
+import type { ResolvedDownloadStream } from './api/apiTypes';
+import { getVideoDetail as getNewPipeVideoDetail } from './api/providers/newpipeAndroidProvider';
+import {
+  getPublicVideoDetail,
+  getVideoDetail as getYtdlpVideoDetail,
+} from './api/providers/ytdlpBackendProvider';
+
+export type { ResolvedDownloadStream } from './api/apiTypes';
 
 declare const process: { env?: Record<string, string | undefined> };
 declare const fetch: (
@@ -53,31 +62,6 @@ const CATEGORY_QUERIES = {
 const FALLBACK_TRENDING_REGION = 'US';
 
 export type FeedCategory = 'all' | keyof typeof CATEGORY_QUERIES;
-
-export interface ResolvedDownloadStream {
-  url: string;
-  ext?: string;
-  container?: string;
-  filesize?: number;
-  quality?: string;
-  height?: number;
-  width?: number;
-  bitrate?: number;
-  headers?: Record<string, string>;
-  title?: string;
-  uploader?: string;
-  uploader_id?: string;
-  uploader_url?: string;
-  channel?: string;
-  channel_id?: string;
-  description?: string;
-  duration?: number;
-  timestamp?: number;
-  upload_date?: string;
-  view_count?: number;
-  like_count?: number;
-  thumbnails?: YtdlpThumbnail[];
-}
 
 interface YtdlpThumbnail {
   url?: string;
@@ -611,42 +595,6 @@ async function tryYtdlpExtract(url: string, flat = false, limit = 20, timeout = 
   return null;
 }
 
-async function tryYtdlpPlayback(videoId: string): Promise<ResolvedDownloadStream | null> {
-  for (const baseUrl of await getReachableYtdlpApiUrls()) {
-    const requestBody = { url: youtubeUrl(videoId) };
-    try {
-      if (__DEV__) {
-        console.log('[playback] POST request', `${baseUrl}/playback`, requestBody);
-      }
-
-      const data = await withHardTimeout(
-        fetchJson<ResolvedDownloadStream>(
-          `${baseUrl}/playback`,
-          { method: 'POST', body: requestBody },
-          // YouTube extraction can legitimately take longer than metadata fetches; keep this
-          // below the screen-level timeout while giving the backend enough room to return a stream.
-          60_000
-        ),
-        61_000
-      );
-      if (__DEV__) {
-        console.log('[playback] POST response', data);
-      }
-      activeYtdlpApiUrl = baseUrl;
-      return {
-        ...data,
-        url: backendStreamUrl(baseUrl, videoId, data),
-        headers: undefined,
-      };
-    } catch (error) {
-      if (__DEV__) {
-        console.log('[playback] POST error', error);
-      }
-    }
-  }
-  return null;
-}
-
 export async function resolveAudioPlaybackStream(videoId: string): Promise<ResolvedDownloadStream | null> {
   for (const baseUrl of await getReachableYtdlpApiUrls()) {
     try {
@@ -820,23 +768,6 @@ function videoIdFromUrl(url: string | undefined, fallback = ''): string {
   return decodeURIComponent(match?.[1] ?? fallback);
 }
 
-function mapPipedStream(stream: PipedStream): VideoStream | null {
-  if (!stream.url) return null;
-  const quality = stream.quality ?? '';
-  const height = stream.height ?? Number(quality.match(/(\d+)p/)?.[1] ?? 0);
-  return {
-    url: stream.url,
-    itag: stream.itag ?? 0,
-    type: stream.mimeType ?? stream.format ?? 'video/mp4',
-    quality,
-    fps: stream.fps,
-    container: stream.format ?? stream.mimeType?.split('/')[1]?.split(';')[0] ?? 'mp4',
-    encoding: stream.codec ?? '',
-    qualityLabel: height ? `${height}p` : quality,
-    bitrate: stream.bitrate ?? 0,
-  };
-}
-
 function mapPipedRelated(item: PipedRelatedStream): VideoResult | null {
   const videoId = videoIdFromUrl(item.url);
   if (!videoId) return null;
@@ -858,101 +789,6 @@ function mapPipedRelated(item: PipedRelatedStream): VideoResult | null {
     premium: false,
     liveNow: false,
     isUpcoming: false,
-  };
-}
-
-function mapPipedDetail(videoId: string, detail: PipedDetail): VideoDetail | null {
-  const allVideoStreams = (detail.videoStreams ?? [])
-    .map(mapPipedStream)
-    .filter((stream): stream is VideoStream => !!stream);
-  const progressiveStreams = (detail.videoStreams ?? [])
-    .filter((stream) => !stream.videoOnly)
-    .map(mapPipedStream)
-    .filter((stream): stream is VideoStream => !!stream);
-  const thumbnails = detail.thumbnailUrl
-    ? [{ quality: 'default', url: detail.thumbnailUrl, width: 0, height: 0 }]
-    : fallbackThumb(videoId);
-
-  if (!detail.hls && progressiveStreams.length === 0 && allVideoStreams.length === 0) {
-    return null;
-  }
-
-  return {
-    videoId,
-    title: detail.title ?? 'Video',
-    author: detail.uploader ?? 'Unknown',
-    authorId: videoIdFromUrl(detail.uploaderUrl),
-    authorUrl: detail.uploaderUrl ?? '',
-    videoThumbnails: thumbnails,
-    description: detail.description ?? '',
-    published: 0,
-    publishedText: detail.uploadDate ?? 'Recently',
-    viewCount: detail.views ?? 0,
-    likeCount: detail.likes,
-    lengthSeconds: detail.duration ?? 0,
-    paid: false,
-    premium: false,
-    liveNow: false,
-    isUpcoming: false,
-    adaptiveFormats: allVideoStreams,
-    formatStreams: progressiveStreams.length > 0 ? progressiveStreams : allVideoStreams,
-    hlsUrl: detail.hls || undefined,
-    dashUrl: detail.dash || undefined,
-    recommendedVideos: (detail.relatedStreams ?? [])
-      .map(mapPipedRelated)
-      .filter((item): item is VideoResult => !!item),
-    authorThumbnails: detail.uploaderAvatar
-      ? [{ quality: 'default', url: detail.uploaderAvatar, width: 0, height: 0 }]
-      : [],
-    subCountText: detail.uploaderSubscriberCount ? formatViewCount(detail.uploaderSubscriberCount) : '',
-    allowRatings: true,
-    rating: 0,
-    isFamilyFriendly: true,
-    genre: detail.category ?? '',
-    keywords: detail.tags ?? [],
-  };
-}
-
-function resultFromResolved(videoId: string, resolved: ResolvedDownloadStream): VideoResult {
-  return {
-    videoId,
-    title: resolved.title ?? 'Video',
-    author: resolved.uploader ?? resolved.channel ?? 'Unknown',
-    authorId: resolved.uploader_id ?? resolved.channel_id ?? '',
-    authorUrl: resolved.uploader_url ?? '',
-    videoThumbnails: mapYtdlpThumbnails(resolved.thumbnails),
-    description: resolved.description ?? '',
-    published: resolved.timestamp ?? 0,
-    publishedText: publishedText({
-      timestamp: resolved.timestamp,
-      upload_date: resolved.upload_date,
-    }),
-    viewCount: resolved.view_count ?? 0,
-    likeCount: resolved.like_count,
-    lengthSeconds: resolved.duration ?? 0,
-    paid: false,
-    premium: false,
-    liveNow: false,
-    isUpcoming: false,
-  };
-}
-
-function detailFromResult(result: VideoResult, playback: ResolvedDownloadStream): VideoDetail {
-  const stream = streamFromResolved(playback);
-  return {
-    ...result,
-    formatStreams: [stream],
-    adaptiveFormats: [stream],
-    hlsUrl: stream.container === 'hls' ? playback.url : undefined,
-    dashUrl: stream.container === 'dash' ? playback.url : undefined,
-    recommendedVideos: [],
-    authorThumbnails: [],
-    subCountText: '',
-    allowRatings: true,
-    rating: 0,
-    isFamilyFriendly: true,
-    genre: '',
-    keywords: [],
   };
 }
 
@@ -1094,40 +930,14 @@ export async function getCategoryFeed(category: FeedCategory, limit = 20): Promi
   return searchPagesUntilLimit({ query, sort: 'upload_date' }, limit, feedResults);
 }
 
-async function getBackendVideoDetail(videoId: string): Promise<VideoDetail | null> {
-  const playback = await tryYtdlpPlayback(videoId);
-  if (playback) {
-    return detailFromResult(resultFromResolved(videoId, playback), playback);
-  }
-
-  const ytdlpInfo = await tryYtdlpExtract(youtubeUrl(videoId), false, 1);
-
-  if (ytdlpInfo) {
-    return mapYtdlpDetail(ytdlpInfo);
-  }
-
-  return null;
-}
-
-async function getPublicVideoDetail(videoId: string): Promise<VideoDetail | null> {
-  try {
-    return await tryInvidious<VideoDetail>(`/api/v1/videos/${videoId}`);
-  } catch {
-    try {
-      const pipedResult = await tryPiped<PipedDetail>(`/streams/${videoId}`);
-      return mapPipedDetail(videoId, pipedResult);
-    } catch {
-      return null;
-    }
-  }
-}
-
 export async function getVideoDetail(videoId: string): Promise<VideoDetail | null> {
+  if (Platform.OS === 'android') {
+    return getNewPipeVideoDetail(videoId);
+  }
+
   // Start the public fallback in parallel, but prefer backend playback whenever it succeeds.
   // Otherwise iOS can receive a raw public HLS URL before the backend proxy is ready.
-  const publicDetailPromise = getPublicVideoDetail(videoId);
-  const backendDetail = await getBackendVideoDetail(videoId);
-  return backendDetail ?? publicDetailPromise;
+  return getYtdlpVideoDetail(videoId);
 }
 
 export async function getRecommendedVideos(videoId: string, query = ''): Promise<VideoResult[]> {

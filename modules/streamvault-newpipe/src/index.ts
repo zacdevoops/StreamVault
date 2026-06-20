@@ -1,1 +1,1 @@
-export { ping, isStreamVaultNewPipeAvailable } from './StreamVaultNewPipeModule';
+export { getVideoDetail, ping, isStreamVaultNewPipeAvailable } from './StreamVaultNewPipeModule';
