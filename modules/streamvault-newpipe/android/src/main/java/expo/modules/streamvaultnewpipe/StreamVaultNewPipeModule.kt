@@ -31,6 +31,24 @@ class StreamVaultNewPipeModule : Module() {
         throw CodedException("NEWPIPE_EXTRACTION_FAILED", error.message ?: "Extraction failed.", error)
       }
     }
+
+    AsyncFunction("searchVideos") { query: String, searchType: String, page: Int ->
+      try {
+        return@AsyncFunction SearchMapper.search(query, searchType, page.coerceAtLeast(1))
+      } catch (error: Exception) {
+        Log.w(TAG, "searchVideos failed for query=$query type=$searchType page=$page", error)
+        throw CodedException("NEWPIPE_SEARCH_FAILED", error.message ?: "Search failed.", error)
+      }
+    }
+
+    AsyncFunction("getFeed") { category: String, region: String, limit: Int ->
+      try {
+        return@AsyncFunction FeedMapper.fetch(category, region, limit.coerceIn(1, 50))
+      } catch (error: Exception) {
+        Log.w(TAG, "getFeed failed for category=$category region=$region limit=$limit", error)
+        throw CodedException("NEWPIPE_FEED_FAILED", error.message ?: "Feed failed.", error)
+      }
+    }
   }
 
   companion object {

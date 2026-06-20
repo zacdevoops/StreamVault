@@ -10,7 +10,7 @@ import {
   VideoThumbnail,
 } from '@/types';
 import type { ResolvedDownloadStream } from './api/apiTypes';
-import { getVideoDetail as getNewPipeVideoDetail } from './api/providers/newpipeAndroidProvider';
+import { getVideoDetail as getNewPipeVideoDetail, getCategoryFeed as getNewPipeCategoryFeed, searchVideos as searchVideosFromNewPipe } from './api/providers/newpipeAndroidProvider';
 import {
   getPublicVideoDetail,
   getVideoDetail as getYtdlpVideoDetail,
@@ -641,7 +641,8 @@ function getDeviceRegion(): string {
     .split('-')
     .map((part) => part.toUpperCase())
     .find((part) => /^[A-Z]{2}$/.test(part));
-  return region ?? FALLBACK_TRENDING_REGION;
+  if (!region || region === 'EN') return FALLBACK_TRENDING_REGION;
+  return region;
 }
 
 function publishedText(info: YtdlpInfo): string {
@@ -812,6 +813,15 @@ function mergeVideoResults(primary: VideoResult[], secondary: VideoResult[], lim
 }
 
 export async function searchVideos(params: SearchParams): Promise<VideoResult[]> {
+  if (Platform.OS === 'android') {
+    const newPipeResults = await searchVideosFromNewPipe(params);
+    if (newPipeResults.length > 0) return newPipeResults;
+  }
+
+  return searchVideosFromBackend(params);
+}
+
+async function searchVideosFromBackend(params: SearchParams): Promise<VideoResult[]> {
   const page = params.page ?? 1;
   if (page === 1 && ((params.type ?? 'video') === 'video' || params.type === 'music')) {
     const query = params.type === 'music' ? `${params.query} music` : params.query;
@@ -870,6 +880,15 @@ async function searchPagesUntilLimit(
 }
 
 export async function getTrending(region = getDeviceRegion(), limit = 20): Promise<VideoResult[]> {
+  if (Platform.OS === 'android') {
+    const newPipeResults = await getNewPipeCategoryFeed('all', region, limit);
+    if (newPipeResults.length > 0) return newPipeResults;
+  }
+
+  return getTrendingFromBackend(region, limit);
+}
+
+async function getTrendingFromBackend(region = getDeviceRegion(), limit = 20): Promise<VideoResult[]> {
   let results = await tryYoutubeTrendingWeb(region, limit);
   if (results.length >= limit) return results;
 
@@ -922,7 +941,17 @@ export async function getMusicTrending(limit = 20, region = getDeviceRegion()): 
 
 export async function getCategoryFeed(category: FeedCategory, limit = 20): Promise<VideoResult[]> {
   const region = getDeviceRegion();
-  if (category === 'all') return getTrending(region, limit);
+  if (Platform.OS === 'android') {
+    const newPipeResults = await getNewPipeCategoryFeed(category, region, limit);
+    if (newPipeResults.length > 0) return newPipeResults;
+  }
+
+  return getCategoryFeedFromBackend(category, limit);
+}
+
+async function getCategoryFeedFromBackend(category: FeedCategory, limit = 20): Promise<VideoResult[]> {
+  const region = getDeviceRegion();
+  if (category === 'all') return getTrendingFromBackend(region, limit);
   if (category === 'music') return getMusicTrending(limit, region);
   const query = `${CATEGORY_QUERIES[category]} ${region}`;
   const feedResults = await tryYtdlpFeed(query, Math.min(limit, 50));
