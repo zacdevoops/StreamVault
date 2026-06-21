@@ -16,6 +16,7 @@ export interface VideoStream {
   qualityLabel: string;
   bitrate: number;
   size?: string;
+  isVideoOnly?: boolean;
   headers?: Record<string, string>;
 }
 
@@ -55,6 +56,9 @@ export interface VideoDetail extends VideoResult {
   formatStreams: VideoStream[];
   hlsUrl?: string;
   dashUrl?: string;
+  playbackUrl?: string;
+  playbackContentType?: 'progressive' | 'hls' | 'dash';
+  playbackHeaders?: Record<string, string>;
   recommendedVideos: VideoResult[];
   authorThumbnails: VideoThumbnail[];
   subCountText: string;

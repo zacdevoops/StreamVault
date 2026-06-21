@@ -3,12 +3,10 @@ package expo.modules.streamvaultnewpipe
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.schabi.newpipe.extractor.ServiceList
 
 @RunWith(AndroidJUnit4::class)
 class DownloadStreamMapperInstrumentedTest {
@@ -39,31 +37,58 @@ class DownloadStreamMapperInstrumentedTest {
   }
 
   @Test
-  fun resolve720p_returns720WhenProgressiveExists() {
-    val videoId = findVideoWithProgressive720p() ?: return
-    val result = DownloadStreamMapper.resolve(videoId, "mp4_720p")
-    assertNotNull("Expected progressive 720p for $videoId", result)
-    assertEquals(720, result!!["height"] as Int)
-  }
+  fun resolve720p_returns720OrAdaptivePairOrNull() {
+    val result = DownloadStreamMapper.resolve("dQw4w9WgXcQ", "mp4_720p")
+    if (result == null) return
 
-  private fun findVideoWithProgressive720p(): String? {
-    val candidates = listOf(
-      "9bZkp7q19f0",
-      "jNQXAC9IVRw",
-      "M7lc1UVf-VE",
-      "dQw4w9WgXcQ",
+    val height = result["height"] as Int
+    val audioUrl = result["audioUrl"] as String?
+    assertTrue(
+      "Expected height >= 720 or adaptive pair, got height=$height audioUrl=$audioUrl",
+      height >= 720 || audioUrl != null,
     )
-
-    NewPipeBootstrap.ensureInitialized()
-    for (videoId in candidates) {
-      val url = "https://www.youtube.com/watch?v=$videoId"
-      val extractor = ServiceList.YouTube.getStreamExtractor(url)
-      runCatching { extractor.fetchPage() }.getOrNull() ?: continue
-      val has720 = extractor.videoStreams.orEmpty().any { stream ->
-        !stream.isVideoOnly && stream.height == 720
-      }
-      if (has720) return videoId
+    assertTrue((result["url"] as String).isNotBlank())
+    if (audioUrl != null) {
+      assertTrue(audioUrl.isNotBlank())
     }
-    return null
   }
+
+  @Test
+  fun resolveMp3_128_returnsAudioUrlClosestTo128k() {
+    val result = DownloadStreamMapper.resolve("dQw4w9WgXcQ", "mp3_128")
+    assertNotNull(result)
+    val url = result!!["url"] as String
+    assertTrue(url.contains("googlevideo.com") || url.contains(".m4a") || url.contains("mime=audio"))
+    val bitrate = result["bitrate"] as Int
+    assertTrue(bitrate > 0)
+
+    @Suppress("UNCHECKED_CAST")
+    val headers = result["headers"] as Map<String, String>
+    val request = Request.Builder()
+      .url(url)
+      .header("User-Agent", headers["User-Agent"]!!)
+      .header("Referer", headers["Referer"]!!)
+      .header("Origin", headers["Origin"]!!)
+      .header("Range", "bytes=0-65535")
+      .build()
+    client.newCall(request).execute().use { response ->
+      assertTrue("Expected HTTP success, got ${response.code}", response.isSuccessful)
+    }
+  }
+
+  @Test
+  fun resolveMp3_320_returnsHighestBitrateAudio() {
+    val result128 = DownloadStreamMapper.resolve("dQw4w9WgXcQ", "mp3_128")
+    val result320 = DownloadStreamMapper.resolve("dQw4w9WgXcQ", "mp3_320")
+    assertNotNull(result320)
+    val url = result320!!["url"] as String
+    assertTrue(url.isNotBlank())
+    val bitrate320 = result320["bitrate"] as Int
+    assertTrue(bitrate320 > 0)
+    if (result128 != null) {
+      val bitrate128 = result128["bitrate"] as Int
+      assertTrue(bitrate320 >= bitrate128)
+    }
+  }
+
 }

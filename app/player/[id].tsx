@@ -10,6 +10,7 @@ import {
   Platform,
   BackHandler,
   Alert,
+  Share,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
@@ -34,18 +35,27 @@ import {
   getRecommendedVideos,
   resolveDownloadStream,
 } from '@/services/api';
+import { pickDownloadStream } from '@/services/downloadStreamSelection';
+import { resolvePlaybackFromDetail } from '@/services/playbackStreamSelection';
+import { mergeDownloadStreams } from 'streamvault-newpipe';
+import { globalVideoManager } from '@/services/GlobalVideoManager';
 import { FormatPicker } from '@/components/FormatPicker';
 import { VideoCard } from '@/components/VideoCard';
 import { SkeletonCard } from '@/components/SkeletonCard';
 import { useLibraryStore } from '@/stores/libraryStore';
 import { saveToHistory, saveLiked, deleteLiked, saveSaved, deleteSaved, saveDownload } from '@/services/database';
 import { Colors, Spacing, Typography, FontSizes, Radius } from '@/constants/theme';
-import { DownloadFormat, DownloadItem, VideoDetail, VideoStream } from '@/types';
+import { DownloadFormat, DownloadItem, VideoDetail } from '@/types';
 import { useDownloadStore } from '@/stores/downloadStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useConfigStore } from '@/stores/configStore';
 import { useGlobalVideo } from '@/contexts/VideoContext';
 import { type GlobalVideoTrack } from '@/services/GlobalVideoManager';
+import { isSameVideoId } from '@/services/playbackSession';
+import {
+  markPictureInPictureStarted,
+  markPictureInPictureStopped,
+} from '@/services/playbackPiPGuard';
 
 type VideoViewComponent = React.ComponentType<{
   player: unknown;
@@ -54,14 +64,9 @@ type VideoViewComponent = React.ComponentType<{
   fullscreenOptions?: { enable: boolean };
   allowsPictureInPicture?: boolean;
   startsPictureInPictureAutomatically?: boolean;
+  onPictureInPictureStart?: () => void;
+  onPictureInPictureStop?: () => void;
 }>;
-
-const FORMAT_HEIGHT: Partial<Record<DownloadFormat, number>> = {
-  mp4_360p: 360,
-  mp4_720p: 720,
-  mp4_1080p: 1080,
-  mp4_4k: 2160,
-};
 
 const PLAYER_TIMEOUT_MS = 75_000;
 
@@ -74,74 +79,8 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
   ]);
 }
 
-function isAudioFormat(format: DownloadFormat): boolean {
-  return ['mp3_128', 'mp3_320', 'flac'].includes(format);
-}
-
-function streamHeight(stream: VideoStream): number {
-  const match = stream.qualityLabel?.match(/(\d+)p/) ?? stream.quality?.match(/(\d+)p/);
-  return match ? Number(match[1]) : 0;
-}
-
-function streamBitrate(stream: VideoStream): number {
-  return stream.bitrate || Number(stream.size) || 0;
-}
-
-function isLikelyAudioStream(stream: VideoStream): boolean {
-  if (!stream.url) return false;
-  const descriptor = [
-    stream.type,
-    stream.container,
-    stream.encoding,
-    stream.quality,
-    stream.qualityLabel,
-  ]
-    .join(' ')
-    .toLowerCase();
-  const hasVideoCodec = /(avc|h264|h265|hevc|vp8|vp9|av01)/i.test(stream.encoding);
-  const hasAudioHint = /(audio|m4a|mp3|aac|opus|vorbis|weba)/i.test(descriptor);
-  return hasAudioHint && !hasVideoCodec && streamHeight(stream) === 0;
-}
-
-function isProgressiveMuxedStream(stream: VideoStream): boolean {
-  if (!stream.url || isLikelyAudioStream(stream)) return false;
-  const url = stream.url.toLowerCase();
-  if (url.includes('.m3u8') || url.includes('.mpd')) return false;
-  const descriptor = [stream.type, stream.container, stream.encoding].join(' ').toLowerCase();
-  if (descriptor.includes('mpegurl') || descriptor.includes('dash')) return false;
-  return streamHeight(stream) > 0;
-}
-
-function selectFallbackStream(video: VideoDetail, format: DownloadFormat): VideoStream | null {
-  if (isAudioFormat(format)) {
-    const targetBitrate = format === 'mp3_128' ? 128_000 : 320_000;
-    const audioStreams = video.adaptiveFormats
-      .filter((stream) => stream.url)
-      .sort((a, b) => {
-        const aScore = Math.abs(streamBitrate(a) - targetBitrate);
-        const bScore = Math.abs(streamBitrate(b) - targetBitrate);
-        return aScore - bScore;
-      });
-    return audioStreams[0] ?? null;
-  }
-
-  const targetHeight = FORMAT_HEIGHT[format] ?? 720;
-  const muxedStreams = video.formatStreams.filter((stream) => isProgressiveMuxedStream(stream));
-  const candidates =
-    format === 'mp4_720p'
-      ? muxedStreams.filter((stream) => streamHeight(stream) === targetHeight)
-      : muxedStreams.filter((stream) => {
-          const height = streamHeight(stream);
-          return height > 0 && height <= targetHeight;
-        });
-
-  return (
-    candidates.sort((a, b) => {
-      const aHeight = streamHeight(a);
-      const bHeight = streamHeight(b);
-      return bHeight - aHeight;
-    })[0] ?? null
-  );
+function nativeFilePath(uri: string): string {
+  return uri.startsWith('file://') ? uri.slice('file://'.length) : uri;
 }
 
 function extensionForDownload(format: DownloadFormat, container?: string): string {
@@ -151,24 +90,8 @@ function extensionForDownload(format: DownloadFormat, container?: string): strin
   return 'mp4';
 }
 
-function selectPlaybackStream(video: VideoDetail): VideoStream | null {
-  return [...video.formatStreams, ...video.adaptiveFormats]
-    .filter((stream) => !!stream.url && !isLikelyAudioStream(stream))
-    .sort((a, b) => {
-      const aHeight = streamHeight(a);
-      const bHeight = streamHeight(b);
-      if (aHeight !== bHeight) return bHeight - aHeight;
-      return streamBitrate(b) - streamBitrate(a);
-    })[0] ?? null;
-}
-
-function contentTypeFromStream(url: string, stream: VideoStream | null): GlobalVideoTrack['contentType'] {
-  const descriptor = [stream?.type, stream?.container, stream?.encoding, stream?.quality]
-    .join(' ')
-    .toLowerCase();
-  if (url.includes('.m3u8') || descriptor.includes('hls') || descriptor.includes('mpegurl')) return 'hls';
-  if (url.includes('.mpd') || descriptor.includes('dash')) return 'dash';
-  return 'progressive';
+function youtubeWatchUrl(videoId: string): string {
+  return `https://www.youtube.com/watch?v=${videoId}`;
 }
 
 export default function PlayerScreen() {
@@ -185,9 +108,11 @@ export default function PlayerScreen() {
 
   const { addToHistory, isLiked, isSaved, toggleLike, toggleSave } = useLibraryStore();
   const { addDownload, updateDownload } = useDownloadStore();
+  const configInitialized = useConfigStore((state) => state.isInitialized);
   const showDownloadButton = useConfigStore((state) => state.showDownloadButton);
   const downloadsEnabled = useConfigStore((state) => state.downloadsEnabled);
-  const { clearPlayer } = usePlayerStore();
+  const canShowDownload = configInitialized && showDownloadButton && downloadsEnabled;
+  const { clearPlayer, showMiniPlayer, hideMiniPlayer } = usePlayerStore();
   const {
     player,
     currentTrack,
@@ -223,17 +148,13 @@ export default function PlayerScreen() {
     refetchOnMount: 'always',
   });
 
-  const playbackStream = useMemo(() => (video ? selectPlaybackStream(video) : null), [video]);
-  const streamUrl = video?.hlsUrl ?? playbackStream?.url ?? '';
+  const resolvedPlayback = useMemo(() => (video ? resolvePlaybackFromDetail(video) : null), [video]);
+  const streamUrl = resolvedPlayback?.url ?? '';
   const playbackVideoId = video?.videoId ?? '';
   const playbackTitle = video?.title;
   const playbackAuthor = video?.author;
   const playbackThumbnails = video?.videoThumbnails;
-  const playbackHeaders = useMemo(() => {
-    if (!video || !streamUrl) return playbackStream?.headers;
-    return [...video.formatStreams, ...video.adaptiveFormats]
-      .find((stream) => stream.url === streamUrl)?.headers ?? playbackStream?.headers;
-  }, [playbackStream, streamUrl, video]);
+  const playbackHeaders = resolvedPlayback?.headers;
   const playbackThumbnail = useMemo(
     () => getBestThumbnail(playbackThumbnails ?? []),
     [playbackThumbnails]
@@ -250,7 +171,7 @@ export default function PlayerScreen() {
     ? video?.recommendedVideos ?? []
     : fallbackRelatedVideos ?? [];
   const playbackTrack = useMemo<GlobalVideoTrack | null>(() => {
-    if (!playbackVideoId || !streamUrl) return null;
+    if (!playbackVideoId || !streamUrl || !resolvedPlayback) return null;
     return {
       id: playbackVideoId,
       fileUri: streamUrl,
@@ -258,10 +179,10 @@ export default function PlayerScreen() {
       author: playbackAuthor,
       thumbnail: playbackThumbnail,
       isAudioOnly: false,
-      contentType: contentTypeFromStream(streamUrl, playbackStream),
+      contentType: resolvedPlayback.contentType,
       headers: playbackHeaders,
     };
-  }, [playbackAuthor, playbackHeaders, playbackStream, playbackThumbnail, playbackTitle, playbackVideoId, streamUrl]);
+  }, [playbackAuthor, playbackHeaders, playbackThumbnail, playbackTitle, playbackVideoId, resolvedPlayback, streamUrl]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -288,9 +209,25 @@ export default function PlayerScreen() {
     clearPlayer();
   }, [clearPlayer, id]);
 
+  useFocusEffect(
+    useCallback(() => {
+      hideMiniPlayer();
+      return () => {
+        if (globalVideoManager.getSnapshot().currentTrack) {
+          showMiniPlayer();
+        }
+      };
+    }, [hideMiniPlayer, showMiniPlayer])
+  );
+
   useEffect(() => {
     const nextTrack = playbackTrack;
-    if (!nextTrack) return;
+    if (!nextTrack || !id) return;
+
+    if (globalVideoManager.isActiveVideoSession(id)) {
+      globalVideoManager.updateSessionMetadata(nextTrack);
+      return;
+    }
 
     // The full player and MiniPlayer share the provider-owned singleton player.
     // Starting here replaces any previous source, but leaving this route must not stop playback:
@@ -299,7 +236,7 @@ export default function PlayerScreen() {
     play(nextTrack.fileUri, nextTrack).catch((err) => {
       if (__DEV__) console.warn('[player] play() failed', err);
     });
-  }, [clearPlayer, play, playbackTrack]);
+  }, [clearPlayer, id, play, playbackTrack]);
 
   useEffect(() => {
     if (video && id) {
@@ -343,11 +280,12 @@ export default function PlayerScreen() {
         throw new Error('Device storage is unavailable.');
       }
 
-      const backendStream = await resolveDownloadStream(video.videoId, format);
-      const fallbackStream = backendStream ? null : selectFallbackStream(video, format);
-      const streamUrl = backendStream?.url ?? fallbackStream?.url;
-      const downloadHeaders = backendStream?.headers ?? fallbackStream?.headers;
-      const ext = extensionForDownload(format, backendStream?.ext ?? fallbackStream?.container);
+      const resolvedStream =
+        (await resolveDownloadStream(video.videoId, format)) ?? pickDownloadStream(video, format);
+      const streamUrl = resolvedStream?.url;
+      const audioUrl = resolvedStream?.audioUrl;
+      const downloadHeaders = resolvedStream?.headers;
+      const ext = extensionForDownload(format, resolvedStream?.ext ?? resolvedStream?.container);
       const fileName = `${video.videoId}_${format}.${ext}`;
       const dirUri = `${FileSystem.documentDirectory}StreamVault`;
       const filePath = `${dirUri}/${fileName}`;
@@ -389,36 +327,84 @@ export default function PlayerScreen() {
       try {
         await FileSystem.makeDirectoryAsync(dirUri, { intermediates: true });
         updateDownload(downloadItem.id, { progress: 0.05 });
-        const resumable = FileSystem.createDownloadResumable(
-          streamUrl,
-          filePath,
-          downloadHeaders ? { headers: downloadHeaders } : {},
-          ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
-            if (!isMountedRef.current) return;
-            if (totalBytesExpectedToWrite <= 0) return;
-            updateDownload(downloadItem.id, {
-              downloadedBytes: totalBytesWritten,
-              progress: Math.max(0.05, Math.min(totalBytesWritten / totalBytesExpectedToWrite, 0.98)),
-            });
+
+        if (audioUrl && Platform.OS === 'android') {
+          const videoTempPath = `${dirUri}/${video.videoId}_${format}.video.tmp`;
+          const audioTempPath = `${dirUri}/${video.videoId}_${format}.audio.tmp`;
+          const downloadOptions = downloadHeaders ? { headers: downloadHeaders } : {};
+
+          const videoResumable = FileSystem.createDownloadResumable(streamUrl, videoTempPath, downloadOptions);
+          activeDownloadRef.current = videoResumable;
+          const videoFile = await videoResumable.downloadAsync();
+          if (!videoFile?.uri || videoFile.status < 200 || videoFile.status >= 300) {
+            throw new Error(`Video download failed with status ${videoFile?.status ?? 'unknown'}.`);
           }
-        );
-        activeDownloadRef.current = resumable;
-        const downloadedFile = await resumable.downloadAsync();
-        if (!downloadedFile?.uri || downloadedFile.status < 200 || downloadedFile.status >= 300) {
-          throw new Error(`Download failed with status ${downloadedFile?.status ?? 'unknown'}.`);
+          updateDownload(downloadItem.id, { progress: 0.45, downloadedBytes: 0 });
+
+          const audioResumable = FileSystem.createDownloadResumable(audioUrl, audioTempPath, downloadOptions);
+          activeDownloadRef.current = audioResumable;
+          const audioFile = await audioResumable.downloadAsync();
+          if (!audioFile?.uri || audioFile.status < 200 || audioFile.status >= 300) {
+            throw new Error(`Audio download failed with status ${audioFile?.status ?? 'unknown'}.`);
+          }
+          updateDownload(downloadItem.id, { progress: 0.85, downloadedBytes: 0 });
+
+          const mergedPath = await mergeDownloadStreams(
+            nativeFilePath(videoFile.uri),
+            nativeFilePath(audioFile.uri),
+            nativeFilePath(filePath)
+          );
+          if (!mergedPath) {
+            throw new Error('Unable to merge video and audio on this device.');
+          }
+
+          await FileSystem.deleteAsync(videoTempPath, { idempotent: true });
+          await FileSystem.deleteAsync(audioTempPath, { idempotent: true });
+
+          const fileInfo = await FileSystem.getInfoAsync(filePath);
+          const fileSize = fileInfo.exists ? fileInfo.size ?? 0 : 0;
+          const completedItem: DownloadItem = {
+            ...downloadItem,
+            filePath,
+            status: 'completed',
+            progress: 1,
+            fileSize,
+            downloadedBytes: fileSize,
+          };
+          updateDownload(downloadItem.id, completedItem);
+          await saveDownload(completedItem);
+        } else {
+          const resumable = FileSystem.createDownloadResumable(
+            streamUrl,
+            filePath,
+            downloadHeaders ? { headers: downloadHeaders } : {},
+            ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
+              if (!isMountedRef.current) return;
+              if (totalBytesExpectedToWrite <= 0) return;
+              updateDownload(downloadItem.id, {
+                downloadedBytes: totalBytesWritten,
+                progress: Math.max(0.05, Math.min(totalBytesWritten / totalBytesExpectedToWrite, 0.98)),
+              });
+            }
+          );
+          activeDownloadRef.current = resumable;
+          const downloadedFile = await resumable.downloadAsync();
+          if (!downloadedFile?.uri || downloadedFile.status < 200 || downloadedFile.status >= 300) {
+            throw new Error(`Download failed with status ${downloadedFile?.status ?? 'unknown'}.`);
+          }
+          const fileInfo = await FileSystem.getInfoAsync(downloadedFile.uri);
+          const fileSize = fileInfo.exists ? fileInfo.size ?? 0 : 0;
+          const completedItem: DownloadItem = {
+            ...downloadItem,
+            filePath: downloadedFile.uri,
+            status: 'completed',
+            progress: 1,
+            fileSize,
+            downloadedBytes: fileSize,
+          };
+          updateDownload(downloadItem.id, completedItem);
+          await saveDownload(completedItem);
         }
-        const fileInfo = await FileSystem.getInfoAsync(downloadedFile.uri);
-        const fileSize = fileInfo.exists ? fileInfo.size ?? 0 : 0;
-        const completedItem: DownloadItem = {
-          ...downloadItem,
-          filePath: downloadedFile.uri,
-          status: 'completed',
-          progress: 1,
-          fileSize,
-          downloadedBytes: fileSize,
-        };
-        updateDownload(downloadItem.id, completedItem);
-        await saveDownload(completedItem);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         await FileSystem.deleteAsync(filePath, { idempotent: true });
@@ -490,6 +476,27 @@ export default function PlayerScreen() {
     }
   };
 
+  const handleShare = useCallback(async () => {
+    const videoId = video?.videoId ?? id;
+    if (!videoId) {
+      Alert.alert('Share unavailable', 'This video cannot be shared right now.');
+      return;
+    }
+
+    const url = youtubeWatchUrl(videoId);
+    const title = video?.title?.trim() || 'StreamVault video';
+
+    try {
+      await Share.share(
+        Platform.OS === 'android'
+          ? { message: url, title }
+          : { message: title, url },
+      );
+    } catch (err) {
+      Alert.alert('Share failed', err instanceof Error ? err.message : 'Unable to open the share sheet.');
+    }
+  }, [id, video?.title, video?.videoId]);
+
   const handleBack = useCallback(() => {
     // Back only changes the visible route. The global player keeps the active source,
     // and MiniPlayer appears automatically once /player/[id] is no longer focused.
@@ -511,6 +518,14 @@ export default function PlayerScreen() {
     }, [handleBack])
   );
 
+  const handlePictureInPictureStart = useCallback(() => {
+    markPictureInPictureStarted();
+  }, []);
+
+  const handlePictureInPictureStop = useCallback(() => {
+    markPictureInPictureStopped();
+  }, []);
+
   const thumbnail = video ? getBestThumbnail(video.videoThumbnails ?? []) : '';
   const queryErrorMessage =
     error instanceof Error
@@ -518,7 +533,7 @@ export default function PlayerScreen() {
       : 'Unable to play this video right now.';
   const showQueryError = isError || (!isLoading && !video);
   const noPlayableSource = !isLoading && !!video && !streamUrl;
-  const isActiveStream = !!streamUrl && currentTrack?.fileUri === streamUrl;
+  const isActiveStream = !!id && isSameVideoId(currentTrack?.id, id);
   const streamPlayerError = isActiveStream && (globalPlayerError || globalPlayerTimedOut)
     ? globalPlayerError ?? 'Unable to prepare this video.'
     : null;
@@ -610,6 +625,8 @@ export default function PlayerScreen() {
               fullscreenOptions={{ enable: true }}
               allowsPictureInPicture
               startsPictureInPictureAutomatically
+              onPictureInPictureStart={handlePictureInPictureStart}
+              onPictureInPictureStop={handlePictureInPictureStop}
             />
           ) : (
             <View style={styles.playerPlaceholder}>
@@ -683,7 +700,7 @@ export default function PlayerScreen() {
                 onPress={handleSave}
                 active={saved}
               />
-              {showDownloadButton && downloadsEnabled && (
+              {canShowDownload && (
                 <ActionBtn
                   icon={
                     <Download
@@ -700,7 +717,7 @@ export default function PlayerScreen() {
               <ActionBtn
                 icon={<Share2 size={18} color={Colors.textSecondary} />}
                 label="Share"
-                onPress={() => {}}
+                onPress={handleShare}
               />
             </View>
 

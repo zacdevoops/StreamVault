@@ -11,9 +11,11 @@ import { Outfit_400Regular } from '@expo-google-fonts/outfit/400Regular';
 import { Outfit_700Bold } from '@expo-google-fonts/outfit/700Bold';
 import { JetBrainsMono_400Regular } from '@expo-google-fonts/jetbrains-mono/400Regular';
 import { MiniPlayer } from '@/components/MiniPlayer';
+import { PlaybackRouteRestoration } from '@/components/PlaybackRouteRestoration';
+import { AutoNextPlayback } from '@/components/AutoNextPlayback';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { VideoProvider } from '@/contexts/VideoContext';
-import { ActivityIndicator, Alert, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, View } from 'react-native';
 import { Colors } from '@/constants/theme';
 import { getHistory, getLiked } from '@/services/database';
 import { useLibraryStore } from '@/stores/libraryStore';
@@ -69,6 +71,15 @@ export default function RootLayout() {
     void useConfigStore.getState().initializeFlags();
   }, []);
 
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void useConfigStore.getState().refreshFlags();
+      }
+    });
+    return () => subscription.remove();
+  }, []);
+
   // Audio session policy is centralized in AppDelegate.swift and GlobalVideoManager.
   // Keeping setAudioModeAsync out of the root layout prevents a second JS-side
   // AVAudioSession writer from racing expo-video during startup/backgrounding.
@@ -81,6 +92,8 @@ export default function RootLayout() {
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <VideoProvider>
+          <PlaybackRouteRestoration />
+          <AutoNextPlayback />
           <View style={{ flex: 1, backgroundColor: Colors.bgBase }}>
             <Suspense fallback={<RouteFallback />}>
               <Stack screenOptions={{ headerShown: false }}>

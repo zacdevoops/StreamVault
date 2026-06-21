@@ -75,6 +75,8 @@
           "supportsPictureInPicture": true
         }
       ],
+      "./plugins/withAndroidMediaNotificationLaunch.js",
+      "./plugins/withAndroidVideoPiPExitFix.js",
       [
         "expo-splash-screen",
         {

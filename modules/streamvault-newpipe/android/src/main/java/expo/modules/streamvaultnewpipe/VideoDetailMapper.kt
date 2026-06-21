@@ -29,17 +29,18 @@ object VideoDetailMapper {
     val videoOnlyStreams = extractor.videoOnlyStreams.orEmpty()
     val audioStreams = extractor.audioStreams.orEmpty()
 
-    val mappedVideoStreams = videoStreams.mapNotNull { mapVideoStream(it) }
-    val mappedVideoOnlyStreams = videoOnlyStreams.mapNotNull { mapVideoStream(it) }
+    val mappedVideoStreams = videoStreams.mapNotNull { mapVideoStream(it, isVideoOnly = false) }
+    val mappedVideoOnlyStreams = videoOnlyStreams.mapNotNull { mapVideoStream(it, isVideoOnly = true) }
     val mappedAudioStreams = audioStreams.mapNotNull { mapAudioStream(it) }
 
     val adaptiveFormats = mappedVideoOnlyStreams + mappedAudioStreams + mappedVideoStreams
-    val formatStreams = if (mappedVideoStreams.isNotEmpty()) mappedVideoStreams else adaptiveFormats
+    val formatStreams = mappedVideoStreams
 
     val hlsUrl = extractor.hlsUrl?.takeIf { it.isNotBlank() }
     val dashUrl = extractor.dashMpdUrl?.takeIf { it.isNotBlank() }
+    val playback = PlaybackStreamMapper.resolve(extractor)
 
-    if (formatStreams.isEmpty() && hlsUrl == null && dashUrl == null) {
+    if (formatStreams.isEmpty() && hlsUrl == null && dashUrl == null && playback == null) {
       throw ExtractionException("No playable streams found for $videoId")
     }
 
@@ -77,6 +78,9 @@ object VideoDetailMapper {
       "formatStreams" to formatStreams,
       "hlsUrl" to hlsUrl,
       "dashUrl" to dashUrl,
+      "playbackUrl" to playback?.get("playbackUrl"),
+      "playbackContentType" to playback?.get("playbackContentType"),
+      "playbackHeaders" to playback?.get("headers"),
       "recommendedVideos" to emptyList<Map<String, Any?>>(),
       "authorThumbnails" to mapAuthorThumbnail(uploaderAvatar),
       "subCountText" to formatCount(subscriberCount),
@@ -88,14 +92,15 @@ object VideoDetailMapper {
     )
   }
 
-  private fun mapVideoStream(stream: VideoStream): Map<String, Any?>? {
+  private fun mapVideoStream(stream: VideoStream, isVideoOnly: Boolean): Map<String, Any?>? {
     val content = stream.content?.takeIf { it.isNotBlank() } ?: return null
     val height = stream.height.takeIf { it > 0 } ?: streamHeightFromResolution(stream.resolution)
     val format = stream.format
     val container = containerForStream(content, format?.mimeType, format?.suffix)
+    val videoOnly = isVideoOnly || stream.isVideoOnly
     val encoding = stream.codec.takeIf { it.isNotBlank() }
       ?: format?.name?.takeIf { it.isNotBlank() }
-      ?: if (stream.isVideoOnly) "video" else "avc1"
+      ?: if (videoOnly) "video" else "avc1"
 
     return mapOf(
       "url" to content,
@@ -105,6 +110,7 @@ object VideoDetailMapper {
       "fps" to stream.fps.takeIf { it > 0 },
       "container" to container,
       "encoding" to encoding,
+      "isVideoOnly" to videoOnly,
       "qualityLabel" to (stream.resolution ?: if (height > 0) "${height}p" else stream.quality ?: ""),
       "bitrate" to stream.bitrate,
       "headers" to playbackHeaders,

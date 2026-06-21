@@ -1,5 +1,6 @@
 export interface ResolvedDownloadStream {
   url: string;
+  audioUrl?: string;
   ext?: string;
   container?: string;
   filesize?: number;

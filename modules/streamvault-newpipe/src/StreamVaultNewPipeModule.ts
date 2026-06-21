@@ -2,12 +2,15 @@ import type { ResolvedDownloadStream } from '@/services/api/apiTypes';
 import type { VideoDetail, VideoResult } from '@/types';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 
+type NewPipeDownloadFormat = 'mp4_360p' | 'mp4_720p' | 'mp3_128' | 'mp3_320';
+
 type StreamVaultNewPipeNativeModule = {
   ping: () => Promise<string>;
   getVideoDetail: (videoId: string) => Promise<VideoDetail>;
   searchVideos: (query: string, searchType: string, page: number) => Promise<VideoResult[]>;
   getFeed: (category: string, region: string, limit: number) => Promise<VideoResult[]>;
   resolveDownloadStream: (videoId: string, format: string) => Promise<ResolvedDownloadStream | null>;
+  mergeDownloadStreams?: (videoPath: string, audioPath: string, outputPath: string) => Promise<string>;
 };
 
 const NativeModule = requireOptionalNativeModule<StreamVaultNewPipeNativeModule>('StreamVaultNewPipe');
@@ -50,12 +53,23 @@ export async function getFeed(params: {
 
 export async function resolveDownloadStream(
   videoId: string,
-  format: 'mp4_360p' | 'mp4_720p'
+  format: NewPipeDownloadFormat
 ): Promise<ResolvedDownloadStream | null> {
   if (!NativeModule?.resolveDownloadStream) {
     return null;
   }
   return NativeModule.resolveDownloadStream(videoId, format);
+}
+
+export async function mergeDownloadStreams(
+  videoPath: string,
+  audioPath: string,
+  outputPath: string
+): Promise<string | null> {
+  if (!NativeModule?.mergeDownloadStreams) {
+    return null;
+  }
+  return NativeModule.mergeDownloadStreams(videoPath, audioPath, outputPath);
 }
 
 export function isStreamVaultNewPipeAvailable(): boolean {

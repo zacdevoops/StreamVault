@@ -11,6 +11,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "test": "jest --passWithNoTests",
+    "postinstall": "node scripts/apply-native-patches.js",
     "bump:version": "node scripts/bump-version.js"
   },
   "dependencies": {
@@ -81,6 +82,13 @@
     "typescript": "~5.9.2"
   },
   "expo": {
+    "autolinking": {
+      "android": {
+        "buildFromSource": [
+          "expo-video"
+        ]
+      }
+    },
     "doctor": {
       "appConfigFieldsNotSyncedCheck": {
         "enabled": false

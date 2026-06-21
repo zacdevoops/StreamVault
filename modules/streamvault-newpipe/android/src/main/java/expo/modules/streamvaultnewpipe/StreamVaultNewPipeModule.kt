@@ -63,6 +63,16 @@ class StreamVaultNewPipeModule : Module() {
         return@AsyncFunction null
       }
     }
+
+    AsyncFunction("mergeDownloadStreams") { videoPath: String, audioPath: String, outputPath: String ->
+      try {
+        DownloadMerger.merge(videoPath, audioPath, outputPath)
+        return@AsyncFunction outputPath
+      } catch (error: Exception) {
+        Log.w(TAG, "mergeDownloadStreams failed", error)
+        throw CodedException("DOWNLOAD_MERGE_FAILED", error.message ?: "Merge failed.", error)
+      }
+    }
   }
 
   companion object {

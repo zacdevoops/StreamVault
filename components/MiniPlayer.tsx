@@ -13,13 +13,13 @@ import { Play, Pause, SkipForward, ChevronDown } from 'lucide-react-native';
 import { router, usePathname } from 'expo-router';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useGlobalVideo } from '@/contexts/VideoContext';
-import { getRecommendedVideos } from '@/services/api';
+import { resolveNextVideoId } from '@/services/playbackQueue';
 import { Colors, Radius, Spacing, Typography, FontSizes } from '@/constants/theme';
 
 export function MiniPlayer() {
   const pathname = usePathname();
   const isLoadingNextRef = useRef(false);
-  const { player, miniPlayerVisible, updatePlayer, hideMiniPlayer } = usePlayerStore();
+  const { player, miniPlayerVisible, updatePlayer, hideMiniPlayer, clearPlayer } = usePlayerStore();
   const {
     currentTrack,
     isPlaying,
@@ -90,9 +90,8 @@ export function MiniPlayer() {
       : null
   );
   const isFullPlayerRoute = pathname.startsWith('/player/');
-  // The MiniPlayer is a collapsed control surface, not a second player surface.
-  // While the full player route is visible, hiding MiniPlayer prevents duplicate controls/audio intent.
-  const isVisible = !isFullPlayerRoute && (miniPlayerVisible || !!currentTrack);
+  // MiniPlayer visibility is explicit: leaving /player/[id] calls showMiniPlayer(), chevron calls hideMiniPlayer().
+  const isVisible = !isFullPlayerRoute && miniPlayerVisible && !!displayTrack;
 
   if (!isVisible || !displayTrack) return null;
 
@@ -110,11 +109,10 @@ export function MiniPlayer() {
     if (player?.audioUrl === displayTrack.fileUri) updatePlayer({ isPlaying: true });
   };
 
-  const handleDismiss = () => {
-    // Dismissal stops the shared player so hidden MiniPlayer audio cannot keep running.
-    stop().catch((err) => {
-      if (__DEV__) console.warn('[MiniPlayer] stop failed', err);
-    });
+  const handleCollapse = () => {
+    updatePlayer({ isPlaying: false });
+    clearPlayer();
+    void stop();
     hideMiniPlayer();
   };
   const activeDuration = duration || player?.duration || 0;
@@ -128,20 +126,19 @@ export function MiniPlayer() {
     : player?.videoId;
   const openVideo = (videoId?: string | null) => {
     if (!videoId) return;
-    router.push({ pathname: '/player/[id]', params: { id: videoId } });
+    router.navigate({ pathname: '/player/[id]', params: { id: videoId } });
   };
   const handleNext = async () => {
     if (!activeVideoId || isLoadingNextRef.current) return;
     isLoadingNextRef.current = true;
     try {
       const query = [displayTrack.author, displayTrack.title].filter(Boolean).join(' ');
-      const recommendations = await getRecommendedVideos(activeVideoId, query);
-      const nextVideo = recommendations.find((item) => item.videoId && item.videoId !== activeVideoId);
-      if (!nextVideo) {
+      const nextVideoId = await resolveNextVideoId(activeVideoId, { query });
+      if (!nextVideoId) {
         Alert.alert('No next video', 'No recommended video is available for this track.');
         return;
       }
-      openVideo(nextVideo.videoId);
+      openVideo(nextVideoId);
     } catch (err) {
       if (__DEV__) console.warn('[MiniPlayer] handleNext failed', err);
       Alert.alert('No next video', 'Unable to load a recommended video right now.');
@@ -188,10 +185,10 @@ export function MiniPlayer() {
               <Play size={20} color={Colors.textPrimary} />
             )}
           </TouchableOpacity>
-          <TouchableOpacity disabled={!activeVideoId} onPress={handleNext} style={styles.iconBtn}>
+          <TouchableOpacity disabled={!activeVideoId} onPress={handleNext} style={styles.iconBtn} accessibilityLabel="Next video">
             <SkipForward size={18} color={activeVideoId ? Colors.textSecondary : Colors.textMuted} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleDismiss} style={styles.iconBtn}>
+          <TouchableOpacity onPress={handleCollapse} style={styles.iconBtn} accessibilityLabel="Collapse mini player">
             <ChevronDown size={18} color={Colors.textMuted} />
           </TouchableOpacity>
         </View>

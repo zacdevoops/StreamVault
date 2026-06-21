@@ -6,7 +6,9 @@ import { Platform } from 'react-native';
 import { useConfigStore } from '@/stores/configStore';
 
 export default function TabLayout() {
+  const configInitialized = useConfigStore((state) => state.isInitialized);
   const downloadsEnabled = useConfigStore((state) => state.downloadsEnabled);
+  const showDownloadsTab = configInitialized && downloadsEnabled;
 
   return (
     <Tabs
@@ -47,7 +49,7 @@ export default function TabLayout() {
         options={{
           title: 'Downloads',
           tabBarIcon: ({ size, color }) => <Download size={size} color={color} />,
-          href: downloadsEnabled ? undefined : null,
+          href: showDownloadsTab ? undefined : null,
         }}
       />
       <Tabs.Screen

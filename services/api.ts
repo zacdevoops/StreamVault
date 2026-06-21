@@ -15,6 +15,8 @@ import {
   getPublicVideoDetail,
   getVideoDetail as getYtdlpVideoDetail,
 } from './api/providers/ytdlpBackendProvider';
+import { isDownloadStreamAcceptable, pickDownloadStream } from './downloadStreamSelection';
+import { mergePlaybackIntoDetail, resolvePlaybackFromDetail } from './playbackStreamSelection';
 
 export type { ResolvedDownloadStream } from './api/apiTypes';
 
@@ -451,13 +453,9 @@ function firstFulfilled<T>(promises: Promise<T>[]): Promise<T> {
   });
 }
 
-function getConfiguredYtdlpApiUrl(): string {
+function getConfiguredYtdlpApiUrl(): string | null {
   const value = process.env?.EXPO_PUBLIC_YTDLP_API_URL?.trim();
-  if (!value) {
-    throw new Error(
-      'EXPO_PUBLIC_YTDLP_API_URL is not set. Set it to your backend base URL.'
-    );
-  }
+  if (!value) return null;
   return value.replace(/\/+$/, '');
 }
 
@@ -501,7 +499,8 @@ async function fetchJson<T>(
 }
 
 function getYtdlpApiUrls(): string[] {
-  return [getConfiguredYtdlpApiUrl()];
+  const configuredUrl = getConfiguredYtdlpApiUrl();
+  return configuredUrl ? [configuredUrl] : [];
 }
 
 async function getReachableYtdlpApiUrls(): Promise<string[]> {
@@ -961,7 +960,16 @@ async function getCategoryFeedFromBackend(category: FeedCategory, limit = 20): P
 
 export async function getVideoDetail(videoId: string): Promise<VideoDetail | null> {
   if (Platform.OS === 'android') {
-    return getNewPipeVideoDetail(videoId);
+    const native = await getNewPipeVideoDetail(videoId);
+    if (native && resolvePlaybackFromDetail(native)) {
+      return native;
+    }
+
+    const backend = await getYtdlpVideoDetail(videoId);
+    if (native && backend) {
+      return mergePlaybackIntoDetail(native, backend);
+    }
+    return native ?? backend ?? getPublicVideoDetail(videoId);
   }
 
   // Start the public fallback in parallel, but prefer backend playback whenever it succeeds.
@@ -980,13 +988,37 @@ export async function getRecommendedVideos(videoId: string, query = ''): Promise
   return detail?.recommendedVideos ?? [];
 }
 
+const NEWPIPE_ANDROID_DOWNLOAD_FORMATS = new Set<DownloadFormat>([
+  'mp4_360p',
+  'mp4_720p',
+  'mp3_128',
+  'mp3_320',
+]);
+
+function isNativeDownloadAcceptable(format: DownloadFormat, stream: ResolvedDownloadStream): boolean {
+  return isDownloadStreamAcceptable(format, stream);
+}
+
 export async function resolveDownloadStream(videoId: string, format: DownloadFormat): Promise<ResolvedDownloadStream | null> {
-  if (Platform.OS === 'android' && (format === 'mp4_360p' || format === 'mp4_720p')) {
+  if (Platform.OS === 'android' && NEWPIPE_ANDROID_DOWNLOAD_FORMATS.has(format)) {
     const nativeStream = await resolveDownloadStreamFromNewPipe(videoId, format);
-    if (nativeStream) return nativeStream;
+    if (nativeStream && isNativeDownloadAcceptable(format, nativeStream)) {
+      return nativeStream;
+    }
   }
 
-  return resolveDownloadStreamFromBackend(videoId, format);
+  const backendStream = await resolveDownloadStreamFromBackend(videoId, format);
+  if (backendStream) return backendStream;
+
+  const publicDetail = await getPublicVideoDetail(videoId);
+  if (publicDetail) {
+    const publicStream = pickDownloadStream(publicDetail, format);
+    if (publicStream && isNativeDownloadAcceptable(format, publicStream)) {
+      return publicStream;
+    }
+  }
+
+  return null;
 }
 
 async function resolveDownloadStreamFromBackend(videoId: string, format: DownloadFormat): Promise<ResolvedDownloadStream | null> {

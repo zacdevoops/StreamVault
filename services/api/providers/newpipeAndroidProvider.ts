@@ -8,7 +8,7 @@ import {
   searchVideos as searchNativeVideos,
 } from 'streamvault-newpipe';
 
-const NEWPIPE_DOWNLOAD_FORMATS = new Set<DownloadFormat>(['mp4_360p', 'mp4_720p']);
+const NEWPIPE_DOWNLOAD_FORMATS = new Set<DownloadFormat>(['mp4_360p', 'mp4_720p', 'mp3_128', 'mp3_320']);
 
 export async function getVideoDetail(videoId: string): Promise<VideoDetail | null> {
   if (!isStreamVaultNewPipeAvailable()) {
@@ -73,7 +73,10 @@ export async function resolveDownloadStream(
   }
 
   try {
-    return await resolveNativeDownloadStream(videoId, format as 'mp4_360p' | 'mp4_720p');
+    return await resolveNativeDownloadStream(
+      videoId,
+      format as 'mp4_360p' | 'mp4_720p' | 'mp3_128' | 'mp3_320'
+    );
   } catch (error) {
     if (__DEV__) {
       console.warn('[newpipe] resolveDownloadStream failed', error);

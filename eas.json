@@ -7,6 +7,9 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_RC_QA_MODE": "true"
+      },
       "ios": {
         "simulator": true
       },
@@ -16,6 +19,9 @@
     },
     "preview": {
       "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_RC_QA_MODE": "true"
+      },
       "ios": {
         "simulator": false
       },

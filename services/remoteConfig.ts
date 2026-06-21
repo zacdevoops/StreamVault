@@ -5,12 +5,14 @@ import {
   fetchAndActivate,
   getBoolean,
   getRemoteConfig,
+  lastFetchStatus,
   setConfigSettings,
   setDefaults,
   type FirebaseRemoteConfigTypes,
 } from '@react-native-firebase/remote-config';
 
 declare const __DEV__: boolean;
+declare const process: { env?: Record<string, string | undefined> };
 
 export interface FeatureFlags {
   enableNewPlayer: boolean;
@@ -33,6 +35,12 @@ export const DEFAULT_FEATURE_FLAGS: FeatureFlags = {
   backgroundPlaybackEnabled: true,
 };
 
+export const REMOTE_CONFIG_FETCH_INTERVAL_MS = {
+  production: 12 * 60 * 60 * 1000,
+  qa: 60 * 1000,
+  debug: 0,
+} as const;
+
 const REMOTE_CONFIG_DEFAULTS = {
   enable_new_player: DEFAULT_FEATURE_FLAGS.enableNewPlayer,
   show_download_button: DEFAULT_FEATURE_FLAGS.showDownloadButton,
@@ -42,6 +50,16 @@ const REMOTE_CONFIG_DEFAULTS = {
 } satisfies FirebaseRemoteConfigTypes.ConfigDefaults;
 
 let initializationPromise: Promise<FirebaseRemoteConfigTypes.Module> | null = null;
+
+export function isQaRemoteConfigMode(): boolean {
+  return process.env?.EXPO_PUBLIC_RC_QA_MODE?.trim().toLowerCase() === 'true';
+}
+
+export function getMinimumFetchIntervalMillis(): number {
+  if (__DEV__) return REMOTE_CONFIG_FETCH_INTERVAL_MS.debug;
+  if (isQaRemoteConfigMode()) return REMOTE_CONFIG_FETCH_INTERVAL_MS.qa;
+  return REMOTE_CONFIG_FETCH_INTERVAL_MS.production;
+}
 
 function hasRemoteConfigNativeModules(): boolean {
   return Boolean(NativeModules.RNFBAppModule && NativeModules.RNFBConfigModule);
@@ -57,6 +75,31 @@ function readFlags(remoteConfig: FirebaseRemoteConfigTypes.Module): FeatureFlags
   };
 }
 
+function shouldLogRemoteConfigDiagnostics(): boolean {
+  return __DEV__ || isQaRemoteConfigMode();
+}
+
+function logRemoteConfigDiagnostics(
+  remoteConfig: FirebaseRemoteConfigTypes.Module,
+  fetchAndActivateResult: boolean | null,
+  flags: FeatureFlags,
+  context: 'success' | 'failure'
+): void {
+  if (!shouldLogRemoteConfigDiagnostics()) return;
+
+  console.log('[remote-config] fetch outcome', {
+    context,
+    fetchAndActivate: fetchAndActivateResult,
+    lastFetchStatus: lastFetchStatus(remoteConfig),
+    downloadFlags: {
+      showDownloadButton: flags.showDownloadButton,
+      downloadsEnabled: flags.downloadsEnabled,
+    },
+    minimumFetchIntervalMillis: getMinimumFetchIntervalMillis(),
+    qaMode: isQaRemoteConfigMode(),
+  });
+}
+
 function getConfiguredRemoteConfig(): Promise<FirebaseRemoteConfigTypes.Module> {
   if (!initializationPromise) {
     const remoteConfig = getRemoteConfig(getApp());
@@ -64,7 +107,7 @@ function getConfiguredRemoteConfig(): Promise<FirebaseRemoteConfigTypes.Module> 
       setDefaults(remoteConfig, REMOTE_CONFIG_DEFAULTS),
       setConfigSettings(remoteConfig, {
         fetchTimeMillis: 10_000,
-        minimumFetchIntervalMillis: __DEV__ ? 0 : 12 * 60 * 60 * 1000,
+        minimumFetchIntervalMillis: getMinimumFetchIntervalMillis(),
       }),
     ])
       .then(() => ensureInitialized(remoteConfig))
@@ -92,11 +135,15 @@ export async function loadFeatureFlags(): Promise<RemoteConfigResult> {
 
   const remoteConfig = await getConfiguredRemoteConfig();
   try {
-    await fetchAndActivate(remoteConfig);
-    return { flags: readFlags(remoteConfig), fetchError: null };
+    const fetchAndActivateResult = await fetchAndActivate(remoteConfig);
+    const flags = readFlags(remoteConfig);
+    logRemoteConfigDiagnostics(remoteConfig, fetchAndActivateResult, flags, 'success');
+    return { flags, fetchError: null };
   } catch (error: unknown) {
+    const flags = readFlags(remoteConfig);
+    logRemoteConfigDiagnostics(remoteConfig, null, flags, 'failure');
     return {
-      flags: readFlags(remoteConfig),
+      flags,
       fetchError: error instanceof Error ? error.message : 'Remote Config fetch failed.',
     };
   }

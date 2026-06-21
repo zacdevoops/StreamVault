@@ -1,5 +1,8 @@
 import { AppState, Platform, type AppStateStatus, type NativeEventSubscription } from 'react-native';
 import type { VideoPlayer, VideoPlayerStatus, VideoSource } from 'expo-video';
+import { isSameVideoId, isSameVideoSession, normalizeVideoId } from '@/services/playbackSession';
+
+import { mergeYoutubePlaybackHeaders } from './youtubePlaybackHeaders';
 
 declare const __DEV__: boolean;
 
@@ -47,6 +50,8 @@ class GlobalVideoManager {
   private loadingTimeout: ReturnType<typeof setTimeout> | null = null;
   private wasInterrupted = false;
   private backgroundPlaybackEnabled = true;
+  private playToEndHandler: (() => void) | null = null;
+  private suppressPlayToEnd = false;
 
   private constructor() {
     this.startAppStateListener();
@@ -113,6 +118,46 @@ class GlobalVideoManager {
     }
   }
 
+  setPlayToEndHandler(handler: (() => void) | null) {
+    this.playToEndHandler = handler;
+  }
+
+  syncFromNativePlayer() {
+    this.resyncFromNativePlayer();
+  }
+
+  isActiveVideoSession(videoId: string): boolean {
+    const normalized = normalizeVideoId(videoId);
+    if (!normalized || !isSameVideoId(this.snapshot.currentTrack?.id, normalized)) return false;
+    if (this.snapshot.status === 'error' || this.snapshot.timedOut) return false;
+
+    const player = this.player;
+    if (player && (player.duration > 0 || player.currentTime > 0)) return true;
+
+    return (
+      this.snapshot.isPlaying ||
+      this.snapshot.status === 'readyToPlay' ||
+      this.snapshot.status === 'loading' ||
+      this.snapshot.position > 0 ||
+      this.snapshot.duration > 0
+    );
+  }
+
+  updateSessionMetadata(partial: Partial<GlobalVideoTrack>): void {
+    const current = this.snapshot.currentTrack;
+    if (!current) return;
+
+    const nextTrack: GlobalVideoTrack = {
+      ...current,
+      ...partial,
+      id: current.id ?? partial.id,
+      fileUri: current.fileUri,
+    };
+    this.resyncFromNativePlayer();
+    this.setSnapshot({ ...this.snapshot, currentTrack: nextTrack });
+    this.updateNowPlayingInfo(nextTrack);
+  }
+
   async play(fileUri: string, track: Partial<GlobalVideoTrack> = {}) {
     const player = this.player;
     if (!player) return;
@@ -121,8 +166,12 @@ class GlobalVideoManager {
       ...track,
       fileUri,
     };
-    const isSameTrack = this.snapshot.currentTrack?.fileUri === fileUri;
-    const shouldReloadTrack = !isSameTrack || this.snapshot.timedOut || this.snapshot.status === 'error';
+    const sameVideoSession = isSameVideoSession(this.snapshot.currentTrack, nextTrack);
+    const sessionTrack = sameVideoSession && this.snapshot.currentTrack
+      ? { ...nextTrack, fileUri: this.snapshot.currentTrack.fileUri }
+      : nextTrack;
+    const shouldReloadTrack =
+      !sameVideoSession || this.snapshot.timedOut || this.snapshot.status === 'error';
     const currentRequest = ++this.requestId;
 
     if (shouldReloadTrack) {
@@ -130,7 +179,7 @@ class GlobalVideoManager {
       this.safePause();
       this.setSnapshot({
         ...this.snapshot,
-        currentTrack: nextTrack,
+        currentTrack: sessionTrack,
         isPlaying: false,
         position: 0,
         duration: 0,
@@ -139,11 +188,11 @@ class GlobalVideoManager {
         timedOut: false,
       });
       this.startLoadingTimeout(currentRequest);
-      this.updateNowPlayingInfo(nextTrack);
+      this.updateNowPlayingInfo(sessionTrack);
 
       try {
         // Replacing the source reuses the one native VideoPlayer instead of creating another.
-        const source = this.sourceFromTrack(nextTrack);
+        const source = this.sourceFromTrack(sessionTrack);
         if (__DEV__) {
           console.log('[GlobalVideoManager] replaceAsync source', source);
         }
@@ -163,13 +212,14 @@ class GlobalVideoManager {
       if (currentRequest !== this.requestId || this.player !== player) return;
       player.currentTime = 0;
     } else {
+      this.resyncFromNativePlayer();
       this.setSnapshot({
         ...this.snapshot,
-        currentTrack: { ...this.snapshot.currentTrack, ...nextTrack },
+        currentTrack: sessionTrack,
         error: null,
         timedOut: false,
       });
-      this.updateNowPlayingInfo({ ...this.snapshot.currentTrack, ...nextTrack });
+      this.updateNowPlayingInfo(sessionTrack);
     }
 
     try {
@@ -212,9 +262,14 @@ class GlobalVideoManager {
 
     if (player) {
       // Loading a null source releases the current item without disposing the reusable player.
+      this.suppressPlayToEnd = true;
       try {
         await player.replaceAsync(null);
-      } catch {}
+      } catch {} finally {
+        setTimeout(() => {
+          this.suppressPlayToEnd = false;
+        }, 250);
+      }
     }
     if (currentRequest !== this.requestId || this.player !== player) return;
     this.setSnapshot(INITIAL_STATE);
@@ -251,7 +306,9 @@ class GlobalVideoManager {
   }
 
   handlePlayToEnd() {
+    if (this.suppressPlayToEnd) return;
     this.setSnapshot({ ...this.snapshot, isPlaying: false, position: this.snapshot.duration });
+    this.playToEndHandler?.();
   }
 
   updateNowPlayingInfo(track = this.snapshot.currentTrack) {
@@ -337,7 +394,7 @@ class GlobalVideoManager {
 
   private sourceFromTrack(track: GlobalVideoTrack): VideoSource {
     const uri = this.normalizePlaybackUri(track.fileUri);
-    const headers = this.flatHeaders(track.headers);
+    const headers = this.flatHeaders(mergeYoutubePlaybackHeaders(uri, track.headers));
     const contentType = track.contentType ?? (/\.m3u8($|[?#])/i.test(uri) ? 'hls' : 'progressive');
 
     const source: VideoSource = {
