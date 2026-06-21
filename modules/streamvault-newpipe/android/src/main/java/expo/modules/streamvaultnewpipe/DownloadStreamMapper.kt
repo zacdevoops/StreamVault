@@ -1,12 +1,18 @@
 package expo.modules.streamvaultnewpipe
 
+import android.util.Log
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.stream.AudioStream
+import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.Stream
 import org.schabi.newpipe.extractor.stream.StreamExtractor
 import org.schabi.newpipe.extractor.stream.VideoStream
 
 object DownloadStreamMapper {
+  private const val TAG = "DownloadStreamMapper"
+
   private const val USER_AGENT =
     "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
@@ -17,6 +23,8 @@ object DownloadStreamMapper {
     "Referer" to "https://www.youtube.com/",
     "Origin" to "https://www.youtube.com",
   )
+
+  private val probeClient = OkHttpClient()
 
   fun resolve(videoId: String, format: String): Map<String, Any?>? {
     return when (format) {
@@ -33,7 +41,7 @@ object DownloadStreamMapper {
       else -> return null
     }
 
-    val extractor = fetchExtractor(videoId) ?: return null
+    val extractor = fetchExtractorWithIos(videoId) ?: return null
     val muxedCandidates = extractor.videoStreams.orEmpty()
       .filter { !it.isVideoOnly }
       .filter { isProgressiveMp4(it) }
@@ -105,24 +113,51 @@ object DownloadStreamMapper {
   }
 
   private fun resolveAudio(videoId: String, format: String): Map<String, Any?>? {
-    val extractor = fetchExtractor(videoId) ?: return null
-    val audioCandidates = extractor.audioStreams.orEmpty().filter { isDownloadableAudio(it) }
+    val extractor = fetchExtractorForAndroid(videoId) ?: return null
+    val audioCandidates = getPlayableDownloadAudioStreams(extractor.audioStreams.orEmpty())
     if (audioCandidates.isNotEmpty()) {
-      return mapSelectedAudio(format, audioCandidates)
+      mapSelectedAudio(format, audioCandidates)?.let { return it }
     }
 
-    // YouTube SABR enforcement often leaves only progressive muxed streams.
+    Log.i(TAG, "Falling back to muxed progressive audio for format=$format videoId=$videoId")
     return resolveAudioFromMuxed(extractor, format)
   }
 
   private fun mapSelectedAudio(format: String, candidates: List<AudioStream>): Map<String, Any?>? {
-    val selected = when (format) {
-      "mp3_128" -> selectClosestBitrate(candidates, TARGET_MP3_128_BPS)
-      "mp3_320" -> candidates.maxByOrNull { streamBitrate(it) }
-      else -> null
-    } ?: return null
+    val ordered = when (format) {
+      "mp3_128" -> candidates.sortedBy {
+        kotlin.math.abs(streamBitrate(it) - TARGET_MP3_128_BPS)
+      }
+      "mp3_320" -> candidates.sortedByDescending { streamBitrate(it) }
+      else -> return null
+    }
 
+    for (selected in ordered) {
+      mapSelectedAudioStream(format, selected)?.let { return it }
+    }
+    return null
+  }
+
+  private fun mapSelectedAudioStream(format: String, selected: AudioStream): Map<String, Any?>? {
     val content = streamContent(selected) ?: return null
+    val deliveryMethod = selected.deliveryMethod
+    val host = urlHost(content)
+    val itag = selected.itag
+
+    Log.i(
+      TAG,
+      "Selected audio itag=$itag deliveryMethod=$deliveryMethod host=$host format=$format",
+    )
+
+    val responseCode = probeDownloadUrl(content)
+    if (responseCode !in 200..299) {
+      Log.w(
+        TAG,
+        "Audio download probe failed itag=$itag deliveryMethod=$deliveryMethod host=$host responseCode=$responseCode",
+      )
+      return null
+    }
+
     val container = containerForStream(
       content,
       selected.format?.mimeType,
@@ -153,6 +188,21 @@ object DownloadStreamMapper {
     } ?: return null
 
     val content = streamContent(selected) ?: return null
+    val host = urlHost(content)
+    Log.i(
+      TAG,
+      "Selected muxed audio fallback itag=${selected.itag} deliveryMethod=${selected.deliveryMethod} host=$host format=$format",
+    )
+
+    val responseCode = probeDownloadUrl(content)
+    if (responseCode !in 200..299) {
+      Log.w(
+        TAG,
+        "Muxed audio download probe failed itag=${selected.itag} deliveryMethod=${selected.deliveryMethod} host=$host responseCode=$responseCode",
+      )
+      return null
+    }
+
     val bitrate = muxedBitrate(selected)
 
     return mapOf(
@@ -165,12 +215,66 @@ object DownloadStreamMapper {
     )
   }
 
-  private fun fetchExtractor(videoId: String) = runCatching {
+  /**
+   * Mirrors NewPipe [org.schabi.newpipe.util.ListHelper.getPlayableStreams] and
+   * [org.schabi.newpipe.util.ListHelper.getFilteredAudioStreams], plus excludes DASH/HLS
+   * URLs that cannot be downloaded as a single progressive file.
+   */
+  private fun getPlayableDownloadAudioStreams(streams: List<AudioStream>): List<AudioStream> {
+    return streams.filter { isPlayableDownloadAudio(it) }
+  }
+
+  private fun isPlayableDownloadAudio(stream: AudioStream): Boolean {
+    if (!stream.isUrl) return false
+
+    val deliveryMethod = stream.deliveryMethod
+    if (deliveryMethod == DeliveryMethod.TORRENT) return false
+    if (deliveryMethod == DeliveryMethod.DASH) return false
+    if (deliveryMethod == DeliveryMethod.HLS) return false
+
+    val content = streamContent(stream) ?: return false
+    if (content.contains(".m3u8") || content.contains(".mpd")) return false
+
+    val mimeType = stream.format?.mimeType?.lowercase().orEmpty()
+    if (mimeType.contains("mpegurl") || mimeType.contains("dash")) return false
+
+    return deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP
+  }
+
+  private fun fetchExtractorForAndroid(videoId: String) = runCatching {
+    NewPipeBootstrap.ensureInitialized()
+    val url = "https://www.youtube.com/watch?v=$videoId"
+    ServiceList.YouTube.getStreamExtractor(url).apply { fetchPage() }
+  }.getOrNull()
+
+  private fun fetchExtractorWithIos(videoId: String) = runCatching {
     NewPipeBootstrap.withIosClientFetch {
       val url = "https://www.youtube.com/watch?v=$videoId"
       ServiceList.YouTube.getStreamExtractor(url).apply { fetchPage() }
     }
   }.getOrNull()
+
+  private fun probeDownloadUrl(url: String): Int {
+    return runCatching {
+      val request = Request.Builder()
+        .url(url)
+        .header("User-Agent", USER_AGENT)
+        .header("Referer", "https://www.youtube.com/")
+        .header("Origin", "https://www.youtube.com")
+        .header("Range", "bytes=0-1")
+        .build()
+      probeClient.newCall(request).execute().use { it.code }
+    }.getOrElse { error ->
+      Log.w(TAG, "Audio download probe error host=${urlHost(url)} message=${error.message}")
+      -1
+    }
+  }
+
+  private fun urlHost(url: String): String {
+    return runCatching {
+      java.net.URI(url).host?.takeIf { it.isNotBlank() }
+    }.getOrNull() ?: "unknown"
+  }
 
   private fun selectClosestBitrate(streams: List<AudioStream>, targetBitrate: Int): AudioStream? {
     return streams
