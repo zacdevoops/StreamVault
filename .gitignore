@@ -47,3 +47,5 @@ google-services.json
 *.tsbuildinfo
 # generated build artifacts
 **/build/android/release.log
+android/release.log
+modules/streamvault-newpipe/android/build/
