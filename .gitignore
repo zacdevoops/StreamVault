@@ -46,4 +46,4 @@ google-services.json
 # typescript
 *.tsbuildinfo
 # generated build artifacts
-**/build/
+**/build/android/release.log
