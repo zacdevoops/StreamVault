@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useRef } from 'react';
 import {
   Alert,
   View,
@@ -9,17 +9,18 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { Play, Pause, SkipForward, ChevronDown } from 'lucide-react-native';
+import { Play, Pause, SkipForward, X } from 'lucide-react-native';
 import { router, usePathname } from 'expo-router';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useGlobalVideo } from '@/contexts/VideoContext';
 import { resolveNextVideoId } from '@/services/playbackQueue';
+import { isLocalPlaybackUri, isRemotePlaybackUri } from '@/services/playbackSession';
 import { Colors, Radius, Spacing, Typography, FontSizes } from '@/constants/theme';
 
 export function MiniPlayer() {
   const pathname = usePathname();
   const isLoadingNextRef = useRef(false);
-  const { player, miniPlayerVisible, updatePlayer, hideMiniPlayer, clearPlayer } = usePlayerStore();
+  const { miniPlayerVisible, hideMiniPlayer } = usePlayerStore();
   const {
     currentTrack,
     isPlaying,
@@ -31,109 +32,52 @@ export function MiniPlayer() {
     stop,
   } = useGlobalVideo();
 
-  useEffect(() => {
-    if (!player?.audioUrl) return;
-
-    if (player.isPlaying) {
-      // Legacy store updates are translated into manager commands so MiniPlayer never owns audio.
-      play(player.audioUrl, {
-        id: player.videoId ?? player.audioUrl,
-        title: player.title,
-        author: player.author,
-        thumbnail: player.thumbnail,
-        isAudioOnly: true,
-      }).catch((err) => {
-        if (__DEV__) console.warn('[MiniPlayer] play failed', err);
-      });
-    } else if (isPlaying && currentTrack?.fileUri === player.audioUrl) {
-      pause();
-    }
-  }, [
-    currentTrack?.fileUri,
-    isPlaying,
-    pause,
-    play,
-    player?.audioUrl,
-    player?.author,
-    player?.isPlaying,
-    player?.thumbnail,
-    player?.title,
-    player?.videoId,
-  ]);
-
-  useEffect(() => {
-    if (!player?.audioUrl || currentTrack?.fileUri !== player.audioUrl) return;
-    // Keep the existing store as display metadata for older callers while playback state is global.
-    updatePlayer({
-      position,
-      duration: duration || player.duration,
-      isPlaying,
-    });
-  }, [
-    currentTrack?.fileUri,
-    duration,
-    isPlaying,
-    player?.audioUrl,
-    player?.duration,
-    position,
-    updatePlayer,
-  ]);
-
-  const displayTrack = currentTrack ?? (
-    player
-      ? {
-          fileUri: player.audioUrl ?? '',
-          title: player.title,
-          author: player.author,
-          thumbnail: player.thumbnail,
-        }
-      : null
-  );
   const isFullPlayerRoute = pathname.startsWith('/player/');
-  // MiniPlayer visibility is explicit: leaving /player/[id] calls showMiniPlayer(), chevron calls hideMiniPlayer().
-  const isVisible = !isFullPlayerRoute && miniPlayerVisible && !!displayTrack;
+  const isVisible = !isFullPlayerRoute && miniPlayerVisible && !!currentTrack;
 
-  if (!isVisible || !displayTrack) return null;
+  if (!isVisible || !currentTrack) return null;
+
+  const isLocalFile = isLocalPlaybackUri(currentTrack.fileUri);
+  const isAudioOnly = !!currentTrack.isAudioOnly;
+  const fullPlayerVideoId = !isAudioOnly ? currentTrack.id : null;
+  const canOpenFullPlayer = !!fullPlayerVideoId && (isRemotePlaybackUri(currentTrack.fileUri) || isLocalFile);
 
   const handlePlayPause = () => {
     if (isPlaying) {
       pause();
-      if (player?.audioUrl === displayTrack.fileUri) updatePlayer({ isPlaying: false });
       return;
     }
 
-    // Replaying the same URI resumes the existing native player instead of constructing a new one.
-    play(displayTrack.fileUri, displayTrack).catch((err) => {
+    play(currentTrack.fileUri, currentTrack).catch((err) => {
       if (__DEV__) console.warn('[MiniPlayer] toggle play failed', err);
     });
-    if (player?.audioUrl === displayTrack.fileUri) updatePlayer({ isPlaying: true });
   };
 
-  const handleCollapse = () => {
-    updatePlayer({ isPlaying: false });
-    clearPlayer();
+  const handleClose = () => {
     void stop();
     hideMiniPlayer();
   };
-  const activeDuration = duration || player?.duration || 0;
-  const activePosition = position || player?.position || 0;
-  const progress = activeDuration > 0
-    ? Math.min(Math.max(activePosition / activeDuration, 0), 1)
+
+  const progress = duration > 0
+    ? Math.min(Math.max(position / duration, 0), 1)
     : 0;
   const isPreparing = isPlaying && status === 'loading';
-  const activeVideoId = currentTrack?.fileUri.startsWith('http')
-    ? currentTrack.id
-    : player?.videoId;
+
   const openVideo = (videoId?: string | null) => {
     if (!videoId) return;
     router.navigate({ pathname: '/player/[id]', params: { id: videoId } });
   };
+
+  const handleOpenPress = () => {
+    openVideo(fullPlayerVideoId);
+  };
+
   const handleNext = async () => {
-    if (!activeVideoId || isLoadingNextRef.current) return;
+    if (!fullPlayerVideoId || !isRemotePlaybackUri(currentTrack.fileUri) || isLoadingNextRef.current) return;
     isLoadingNextRef.current = true;
     try {
-      const query = [displayTrack.author, displayTrack.title].filter(Boolean).join(' ');
-      const nextVideoId = await resolveNextVideoId(activeVideoId, { query });
+      const query = [currentTrack.author, currentTrack.title].filter(Boolean).join(' ');
+      const nextVideoId = await resolveNextVideoId(fullPlayerVideoId, { query });
       if (!nextVideoId) {
         Alert.alert('No next video', 'No recommended video is available for this track.');
         return;
@@ -160,19 +104,19 @@ export function MiniPlayer() {
       </View>
       <View style={styles.content}>
         <TouchableOpacity
-          disabled={!activeVideoId}
-          onPress={() => openVideo(activeVideoId)}
+          disabled={!canOpenFullPlayer}
+          onPress={handleOpenPress}
           style={styles.openArea}
-          activeOpacity={0.8}
+          activeOpacity={canOpenFullPlayer ? 0.8 : 1}
         >
-          {displayTrack.thumbnail ? (
-            <Image source={{ uri: displayTrack.thumbnail }} style={styles.thumb} />
+          {currentTrack.thumbnail ? (
+            <Image source={{ uri: currentTrack.thumbnail }} style={styles.thumb} />
           ) : (
             <View style={[styles.thumb, styles.thumbFallback]} />
           )}
           <View style={styles.info}>
-            <Text style={styles.title} numberOfLines={1}>{displayTrack.title}</Text>
-            <Text style={styles.author} numberOfLines={1}>{displayTrack.author}</Text>
+            <Text style={styles.title} numberOfLines={1}>{currentTrack.title}</Text>
+            <Text style={styles.author} numberOfLines={1}>{currentTrack.author}</Text>
           </View>
         </TouchableOpacity>
         <View style={styles.controls}>
@@ -185,11 +129,16 @@ export function MiniPlayer() {
               <Play size={20} color={Colors.textPrimary} />
             )}
           </TouchableOpacity>
-          <TouchableOpacity disabled={!activeVideoId} onPress={handleNext} style={styles.iconBtn} accessibilityLabel="Next video">
-            <SkipForward size={18} color={activeVideoId ? Colors.textSecondary : Colors.textMuted} />
+          <TouchableOpacity
+            disabled={!fullPlayerVideoId || isLocalFile}
+            onPress={handleNext}
+            style={styles.iconBtn}
+            accessibilityLabel="Next video"
+          >
+            <SkipForward size={18} color={fullPlayerVideoId && !isLocalFile ? Colors.textSecondary : Colors.textMuted} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleCollapse} style={styles.iconBtn} accessibilityLabel="Collapse mini player">
-            <ChevronDown size={18} color={Colors.textMuted} />
+          <TouchableOpacity onPress={handleClose} style={styles.iconBtn} accessibilityLabel="Close mini player">
+            <X size={18} color={Colors.textMuted} />
           </TouchableOpacity>
         </View>
       </View>
@@ -213,8 +162,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 12,
     elevation: 20,
-    // Android can render an absolute view above content while still letting lower rows win touches.
-    // A high zIndex keeps MiniPlayer controls as the top interactive surface across tabs/routes.
     zIndex: 1000,
   },
   progressLine: {

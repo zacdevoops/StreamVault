@@ -51,7 +51,7 @@ import { usePlayerStore } from '@/stores/playerStore';
 import { useConfigStore } from '@/stores/configStore';
 import { useGlobalVideo } from '@/contexts/VideoContext';
 import { type GlobalVideoTrack } from '@/services/GlobalVideoManager';
-import { isSameVideoId } from '@/services/playbackSession';
+import { isSameVideoId, isLocalPlaybackUri } from '@/services/playbackSession';
 import {
   markPictureInPictureStarted,
   markPictureInPictureStopped,
@@ -112,7 +112,7 @@ export default function PlayerScreen() {
   const showDownloadButton = useConfigStore((state) => state.showDownloadButton);
   const downloadsEnabled = useConfigStore((state) => state.downloadsEnabled);
   const canShowDownload = configInitialized && showDownloadButton && downloadsEnabled;
-  const { clearPlayer, showMiniPlayer, hideMiniPlayer } = usePlayerStore();
+  const { showMiniPlayer, hideMiniPlayer } = usePlayerStore();
   const {
     player,
     currentTrack,
@@ -205,10 +205,6 @@ export default function PlayerScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    clearPlayer();
-  }, [clearPlayer, id]);
-
   useFocusEffect(
     useCallback(() => {
       hideMiniPlayer();
@@ -222,7 +218,26 @@ export default function PlayerScreen() {
 
   useEffect(() => {
     const nextTrack = playbackTrack;
-    if (!nextTrack || !id) return;
+    if (!id) return;
+
+    const activeTrack = currentTrack;
+    if (
+      activeTrack &&
+      isLocalPlaybackUri(activeTrack.fileUri) &&
+      !activeTrack.isAudioOnly &&
+      isSameVideoId(activeTrack.id, id)
+    ) {
+      if (nextTrack) {
+        globalVideoManager.updateSessionMetadata({
+          title: nextTrack.title,
+          author: nextTrack.author,
+          thumbnail: nextTrack.thumbnail,
+        });
+      }
+      return;
+    }
+
+    if (!nextTrack) return;
 
     if (globalVideoManager.isActiveVideoSession(id)) {
       globalVideoManager.updateSessionMetadata(nextTrack);
@@ -232,11 +247,10 @@ export default function PlayerScreen() {
     // The full player and MiniPlayer share the provider-owned singleton player.
     // Starting here replaces any previous source, but leaving this route must not stop playback:
     // route visibility decides which surface controls the same active player.
-    clearPlayer();
     play(nextTrack.fileUri, nextTrack).catch((err) => {
       if (__DEV__) console.warn('[player] play() failed', err);
     });
-  }, [clearPlayer, id, play, playbackTrack]);
+  }, [currentTrack, id, play, playbackTrack]);
 
   useEffect(() => {
     if (video && id) {
@@ -500,12 +514,15 @@ export default function PlayerScreen() {
   const handleBack = useCallback(() => {
     // Back only changes the visible route. The global player keeps the active source,
     // and MiniPlayer appears automatically once /player/[id] is no longer focused.
+    if (globalVideoManager.getSnapshot().currentTrack) {
+      showMiniPlayer();
+    }
     if (router.canGoBack()) {
       router.back();
     } else {
       router.replace('/');
     }
-  }, []);
+  }, [showMiniPlayer]);
 
   useFocusEffect(
     useCallback(() => {
@@ -526,18 +543,28 @@ export default function PlayerScreen() {
     markPictureInPictureStopped();
   }, []);
 
-  const thumbnail = video ? getBestThumbnail(video.videoThumbnails ?? []) : '';
+  const thumbnail = video ? getBestThumbnail(video.videoThumbnails ?? []) : (currentTrack?.thumbnail ?? '');
   const queryErrorMessage =
     error instanceof Error
       ? error.message
       : 'Unable to play this video right now.';
-  const showQueryError = isError || (!isLoading && !video);
-  const noPlayableSource = !isLoading && !!video && !streamUrl;
-  const isActiveStream = !!id && isSameVideoId(currentTrack?.id, id);
-  const streamPlayerError = isActiveStream && (globalPlayerError || globalPlayerTimedOut)
+  const isActiveLocalPlayback =
+    !!id &&
+    !!currentTrack &&
+    isLocalPlaybackUri(currentTrack.fileUri) &&
+    !currentTrack.isAudioOnly &&
+    isSameVideoId(currentTrack.id, id);
+  const showQueryError = (isError || (!isLoading && !video)) && !isActiveLocalPlayback;
+  const noPlayableSource = !isLoading && !!video && !streamUrl && !isActiveLocalPlayback;
+  const isActiveSession = !!id && isSameVideoId(currentTrack?.id, id);
+  const playbackError = isActiveSession && (globalPlayerError || globalPlayerTimedOut)
     ? globalPlayerError ?? 'Unable to prepare this video.'
     : null;
-  const streamIsLoading = isActiveStream && globalPlayerStatus === 'loading' && !streamPlayerError;
+  const playbackIsLoading = isActiveSession && globalPlayerStatus === 'loading' && !playbackError;
+  const canRenderVideoView =
+    !!VideoViewComponent &&
+    !showQueryError &&
+    (isActiveLocalPlayback || (!noPlayableSource && !isLoading && !playbackError && !playbackIsLoading));
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -568,7 +595,7 @@ export default function PlayerScreen() {
                 </TouchableOpacity>
               </View>
             </View>
-          ) : noPlayableSource || isLoading || streamPlayerError || streamIsLoading ? (
+          ) : !canRenderVideoView ? (
             <View style={styles.playerPlaceholder}>
               {thumbnail ? (
                 <Image source={{ uri: thumbnail }} style={styles.playerThumb} />
@@ -591,13 +618,16 @@ export default function PlayerScreen() {
                       <Text style={styles.retryText}>{isFetching ? 'Retrying...' : 'Retry'}</Text>
                     </TouchableOpacity>
                   </>
-                ) : streamPlayerError ? (
+                ) : playbackError ? (
                   <>
-                    <Text style={styles.playerErrorText}>{streamPlayerError}</Text>
+                    <Text style={styles.playerErrorText}>{playbackError}</Text>
                     <TouchableOpacity
                       onPress={() => {
-                        if (playbackTrack) {
-                          play(playbackTrack.fileUri, playbackTrack).catch((err) => {
+                        const retryTrack = isActiveLocalPlayback
+                          ? currentTrack
+                          : playbackTrack;
+                        if (retryTrack) {
+                          play(retryTrack.fileUri, retryTrack).catch((err) => {
                             if (__DEV__) console.warn('[player] retry play() failed', err);
                           });
                         }
@@ -738,6 +768,20 @@ export default function PlayerScreen() {
                 </Text>
               </TouchableOpacity>
             )}
+          </View>
+        ) : isActiveLocalPlayback && currentTrack ? (
+          <View style={styles.metaContainer}>
+            <Text style={styles.videoTitle}>{currentTrack.title}</Text>
+            <View style={styles.channelRow}>
+              <View style={styles.channelAvatar}>
+                <Text style={styles.channelInitial}>
+                  {(currentTrack.author?.[0] ?? '?').toUpperCase()}
+                </Text>
+              </View>
+              <View style={styles.channelInfo}>
+                <Text style={styles.channelName}>{currentTrack.author}</Text>
+              </View>
+            </View>
           </View>
         ) : null}
 

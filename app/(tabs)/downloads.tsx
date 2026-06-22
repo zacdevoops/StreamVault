@@ -203,8 +203,7 @@ export default function DownloadsScreen() {
         if (__DEV__) console.warn('[downloads] saveRecoveredDownloadPath failed', err);
       }
     }
-    // Local downloads become the active global track, so stale MiniPlayer metadata must stand down.
-    usePlayerStore.getState().clearPlayer();
+    usePlayerStore.getState().hideMiniPlayer();
     setPlayingItem(playableItem);
   }, [removeDownload]);
 
@@ -246,7 +245,10 @@ export default function DownloadsScreen() {
     ),
     [activeTab]
   );
-  const closePlayer = useCallback(() => setPlayingItem(null), []);
+  const closePlayer = useCallback(() => {
+    setPlayingItem(null);
+    usePlayerStore.getState().showMiniPlayer();
+  }, []);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -386,14 +388,10 @@ function AudioDownloadPlayer({ item }: { item: DownloadItem }) {
   const showRetry = isActiveTrack && (!!activeError || timedOut);
 
   useEffect(() => {
-    // Mounting the sheet claims the singleton player, which automatically pauses any prior track.
     play(item.filePath, track).catch((err) => {
       if (__DEV__) console.warn('[downloads] audio play failed', err);
     });
-    return () => {
-      pause();
-    };
-  }, [item.filePath, play, track, pause]);
+  }, [item.filePath, play, track]);
 
   const togglePlayback = () => {
     if (isActiveTrack && isPlaying) {
@@ -467,14 +465,10 @@ function VideoDownloadPlayer({ item }: { item: DownloadItem }) {
   }, []);
 
   useEffect(() => {
-    // VideoView receives the existing player; only the source changes inside the manager.
     play(item.filePath, track).catch((err) => {
       if (__DEV__) console.warn('[downloads] video play failed', err);
     });
-    return () => {
-      pause();
-    };
-  }, [item.filePath, play, track, pause]);
+  }, [item.filePath, play, track]);
 
   const togglePlayback = () => {
     if (isActiveTrack && isPlaying) {

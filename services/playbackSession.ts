@@ -13,7 +13,17 @@ export function isSameVideoId(a?: string | null, b?: string | null): boolean {
 
 export function playerRouteVideoId(pathname: string): string | null {
   const match = pathname.match(/^\/player\/([^/?]+)/);
-  return match?.[1] ? decodeURIComponent(match[1]) : null;
+  const segment = match?.[1] ? decodeURIComponent(match[1]) : null;
+  if (!segment || segment === 'local') return null;
+  return segment;
+}
+
+export function isRemotePlaybackUri(uri?: string | null): boolean {
+  return !!uri && (uri.startsWith('http://') || uri.startsWith('https://'));
+}
+
+export function isLocalPlaybackUri(uri?: string | null): boolean {
+  return !!uri && !isRemotePlaybackUri(uri);
 }
 
 export function isSameVideoSession(
@@ -21,7 +31,9 @@ export function isSameVideoSession(
   next: GlobalVideoTrack | null | undefined,
 ): boolean {
   if (!current || !next) return false;
+  if (!!current.fileUri && current.fileUri === next.fileUri) return true;
+  if (isRemotePlaybackUri(current.fileUri) !== isRemotePlaybackUri(next.fileUri)) return false;
   if (isSameVideoId(current.id, next.id)) return true;
   if (normalizeVideoId(current.id) || normalizeVideoId(next.id)) return false;
-  return !!current.fileUri && current.fileUri === next.fileUri;
+  return false;
 }
