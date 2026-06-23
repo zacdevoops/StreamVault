@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, usePathname } from 'expo-router';
 import { FlashList } from '@shopify/flash-list';
 import { Clock, TrendingUp } from 'lucide-react-native';
 import { searchVideos } from '@/services/api';
@@ -18,6 +18,7 @@ import { addSearchHistory, getSearchHistory, clearSearchHistory } from '@/servic
 import { SearchBar } from '@/components/SearchBar';
 import { VideoCard } from '@/components/VideoCard';
 import { SkeletonCard } from '@/components/SkeletonCard';
+import { adsService } from '@/services/ads/AdsService';
 import { Colors, Spacing, Typography, FontSizes, Radius } from '@/constants/theme';
 import { SearchType, SortOrder, VideoResult } from '@/types';
 
@@ -41,6 +42,7 @@ const TRENDING_SEARCHES = [
 const SEARCH_PAGE_SIZE = 20;
 
 export default function SearchScreen() {
+  const pathname = usePathname();
   const params = useLocalSearchParams<{
     q?: string;
     type?: SearchType | 'all';
@@ -187,8 +189,13 @@ export default function SearchScreen() {
     setPage((prev) => prev + 1);
   };
 
+  useEffect(() => {
+    if (debouncedQuery.length < 2 || page !== 1 || isLoading || searchResults.length === 0) return;
+    void adsService.tryShowInterstitial('search_results', pathname);
+  }, [debouncedQuery, isLoading, page, pathname, searchResults.length]);
+
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       {/* Search input */}
       <View style={styles.searchContainer}>
         <SearchBar

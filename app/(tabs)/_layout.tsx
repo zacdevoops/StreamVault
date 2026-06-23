@@ -4,6 +4,7 @@ import { Home, Search, Download, Library } from 'lucide-react-native';
 import { Colors, Typography, FontSizes } from '@/constants/theme';
 import { Platform } from 'react-native';
 import { useConfigStore } from '@/stores/configStore';
+import { TabBarWithBanner } from '@/components/ads/TabBarWithBanner';
 
 export default function TabLayout() {
   const configInitialized = useConfigStore((state) => state.isInitialized);
@@ -12,15 +13,17 @@ export default function TabLayout() {
 
   return (
     <Tabs
+      tabBar={(props) => <TabBarWithBanner {...props} />}
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
           backgroundColor: Colors.bgSurface,
           borderTopColor: Colors.border,
           borderTopWidth: 1,
-          height: Platform.OS === 'ios' ? 84 : 60,
-          paddingBottom: Platform.OS === 'ios' ? 24 : 8,
           paddingTop: 8,
+          ...(Platform.OS === 'ios'
+            ? { height: 84, paddingBottom: 24 }
+            : {}),
         },
         tabBarActiveTintColor: Colors.accent,
         tabBarInactiveTintColor: Colors.textMuted,

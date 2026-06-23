@@ -158,6 +158,8 @@ android {
 }
 
 dependencies {
+    // Meta Audience Network adapter for AdMob mediation (Android only).
+    implementation 'com.google.ads.mediation:facebook:6.20.0.0'
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.4'
 
     // The version of react-native is set by the React Native Gradle Plugin

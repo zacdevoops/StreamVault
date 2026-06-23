@@ -14,10 +14,12 @@ import { ArrowLeft, Users } from 'lucide-react-native';
 import { getChannel, searchVideos, formatViewCount } from '@/services/api';
 import { VideoCard } from '@/components/VideoCard';
 import { SkeletonCard } from '@/components/SkeletonCard';
+import { useGlobalBannerBottomInset } from '@/hooks/useGlobalBannerBottomInset';
 import { Colors, Spacing, Typography, FontSizes, Radius } from '@/constants/theme';
 
 export default function ChannelScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const bannerBottomInset = useGlobalBannerBottomInset();
 
   const { data: channel, isLoading: channelLoading } = useQuery({
     queryKey: ['channel', id],
@@ -56,7 +58,7 @@ export default function ChannelScreen() {
       <FlatList
         data={videos ?? []}
         keyExtractor={(item) => item.videoId}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, { paddingBottom: 100 + bannerBottomInset }]}
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
           channelLoading ? (

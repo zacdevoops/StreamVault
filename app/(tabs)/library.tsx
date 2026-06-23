@@ -105,7 +105,7 @@ export default function LibraryScreen() {
   const historySections = groupByDate(displayHistory);
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>My Library</Text>

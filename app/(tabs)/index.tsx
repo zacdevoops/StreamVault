@@ -11,7 +11,7 @@ import {
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
-import { router } from 'expo-router';
+import { router, usePathname } from 'expo-router';
 import { useNetInfo } from '@react-native-community/netinfo';
 import { FlashList, type ListRenderItem } from '@shopify/flash-list';
 import { Bell, User, Music, WifiOff, RefreshCw } from 'lucide-react-native';
@@ -26,6 +26,7 @@ import { SearchBar } from '@/components/SearchBar';
 import { CategoryChips } from '@/components/CategoryChips';
 import { VideoCard } from '@/components/VideoCard';
 import { SkeletonCard } from '@/components/SkeletonCard';
+import { adsService } from '@/services/ads/AdsService';
 import { Colors, Spacing, Typography, FontSizes, Radius } from '@/constants/theme';
 import { VideoResult } from '@/types';
 
@@ -47,6 +48,7 @@ type HomeListItem =
   | { type: 'music'; item: VideoResult; rank: number };
 
 export default function HomeScreen() {
+  const pathname = usePathname();
   const [selectedCategory, setSelectedCategory] = useState<FeedCategory>('all');
   const [feedPage, setFeedPage] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
@@ -179,13 +181,18 @@ export default function HomeScreen() {
     [musicChartData.length]
   );
 
+  useEffect(() => {
+    if (feedPage <= 1 || feedLoading || !hasData) return;
+    void adsService.tryShowInterstitial('feed_page', pathname);
+  }, [feedPage, feedLoading, hasData, pathname]);
+
   const showHomeShortcutPending = useCallback((feature: string) => {
     // These header shortcuts are visible Home controls; give the user feedback instead of a dead tap.
     Alert.alert(feature, 'This shortcut is not ready yet.');
   }, []);
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <FlashList
         data={listData}
         keyExtractor={(item, index) => {

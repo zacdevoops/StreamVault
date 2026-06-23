@@ -4,8 +4,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ArrowLeft } from 'lucide-react-native';
 import { Colors, FontSizes, Radius, Spacing, Typography } from '@/constants/theme';
+import { useGlobalBannerBottomInset } from '@/hooks/useGlobalBannerBottomInset';
 
 export default function PrivacyPolicyScreen() {
+  const bannerBottomInset = useGlobalBannerBottomInset();
+
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.topBar}>
@@ -25,7 +28,11 @@ export default function PrivacyPolicyScreen() {
         <Text style={styles.title}>Privacy Policy</Text>
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[styles.content, { paddingBottom: Spacing.xxl + bannerBottomInset }]}
+        showsVerticalScrollIndicator={false}
+      >
         <PolicySection
           title="Data Collection"
           body="We collect information required to provide app features, such as search queries, playback data, and download metadata. We do not collect payment information in this app."

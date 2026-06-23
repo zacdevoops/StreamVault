@@ -6,7 +6,6 @@ import {
   Image,
   TouchableOpacity,
   StyleSheet,
-  Platform,
   ActivityIndicator,
 } from 'react-native';
 import { Play, Pause, SkipForward, X } from 'lucide-react-native';
@@ -16,9 +15,11 @@ import { useGlobalVideo } from '@/contexts/VideoContext';
 import { resolveNextVideoId } from '@/services/playbackQueue';
 import { isLocalPlaybackUri, isRemotePlaybackUri } from '@/services/playbackSession';
 import { Colors, Radius, Spacing, Typography, FontSizes } from '@/constants/theme';
+import { useMiniPlayerBottomOffset } from '@/hooks/useMiniPlayerBottomOffset';
 
 export function MiniPlayer() {
   const pathname = usePathname();
+  const bottomOffset = useMiniPlayerBottomOffset();
   const isLoadingNextRef = useRef(false);
   const { miniPlayerVisible, hideMiniPlayer } = usePlayerStore();
   const {
@@ -92,7 +93,7 @@ export function MiniPlayer() {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { bottom: bottomOffset }]}>
       <View style={styles.progressLine}>
         <View
           style={[
@@ -149,7 +150,6 @@ export function MiniPlayer() {
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 82 : 60,
     left: Spacing.sm,
     right: Spacing.sm,
     backgroundColor: Colors.bgElevated,

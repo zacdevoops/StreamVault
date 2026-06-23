@@ -10,6 +10,8 @@ import { useFonts } from 'expo-font';
 import { Outfit_400Regular } from '@expo-google-fonts/outfit/400Regular';
 import { Outfit_700Bold } from '@expo-google-fonts/outfit/700Bold';
 import { JetBrainsMono_400Regular } from '@expo-google-fonts/jetbrains-mono/400Regular';
+import { AdsBootstrap } from '@/components/ads/AdsBootstrap';
+import { StackBannerOverlay } from '@/components/ads/StackBannerOverlay';
 import { MiniPlayer } from '@/components/MiniPlayer';
 import { PlaybackRouteRestoration } from '@/components/PlaybackRouteRestoration';
 import { AutoNextPlayback } from '@/components/AutoNextPlayback';
@@ -92,6 +94,7 @@ export default function RootLayout() {
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <VideoProvider>
+          <AdsBootstrap />
           <PlaybackRouteRestoration />
           <AutoNextPlayback />
           <View style={{ flex: 1, backgroundColor: Colors.bgBase }}>
@@ -113,6 +116,7 @@ export default function RootLayout() {
                 <Stack.Screen name="+not-found" />
               </Stack>
             </Suspense>
+            <StackBannerOverlay />
             <MiniPlayer />
             <StatusBar style="light" />
           </View>
