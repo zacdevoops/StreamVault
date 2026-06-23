@@ -3,6 +3,7 @@ import mobileAds, {
   InterstitialAd,
   MaxAdContentRating,
   RewardedAd,
+  RewardedAdEventType,
 } from 'react-native-google-mobile-ads';
 import { adsConfig, isAdsSupportedPlatform } from '@/services/ads/adsConfig';
 import { canShowInterstitial, resolveBannerPlacement } from '@/services/ads/adRouteGuard';
@@ -14,10 +15,13 @@ import {
   type InterstitialPolicyState,
   type InterstitialTrigger,
 } from '@/services/ads/interstitialPolicy';
+import { getRewardedPolicyState, recordRewardedCompletion } from '@/services/ads/rewardedPolicy';
 
 declare const __DEV__: boolean;
 
 type AdapterStatusList = Awaited<ReturnType<ReturnType<typeof mobileAds>['initialize']>>;
+
+export type RewardedShowOutcome = 'earned' | 'closed' | 'failed' | 'unavailable';
 
 class AdsService {
   private initialized = false;
@@ -29,7 +33,9 @@ class AdsService {
   private interstitial: InterstitialAd | null = null;
   private interstitialLoaded = false;
   private interstitialLoading = false;
-  private rewardedPrepared = false;
+  private rewarded: RewardedAd | null = null;
+  private rewardedLoaded = false;
+  private rewardedLoading = false;
 
   async initialize(): Promise<void> {
     if (!isAdsSupportedPlatform()) return;
@@ -71,6 +77,93 @@ class AdsService {
 
   getBannerUnitIdForPath(pathname: string): string | null {
     return this.getBannerUnitId(resolveBannerPlacement(pathname));
+  }
+
+  canOfferDownloadRewardedPrompt(): boolean {
+    if (!this.initialized || !isAdsSupportedPlatform() || !adsConfig.rewardedEnabled) {
+      return false;
+    }
+    return !!adsConfig.units.rewardedAndroid;
+  }
+
+  getRewardedCompletionStats() {
+    return getRewardedPolicyState();
+  }
+
+  async tryShowRewardedAd(): Promise<RewardedShowOutcome> {
+    if (!this.canOfferDownloadRewardedPrompt()) {
+      this.logRewarded('failed', { phase: 'show', reason: 'unavailable' });
+      return 'unavailable';
+    }
+
+    if (!this.rewardedLoaded || !this.rewarded) {
+      this.preloadRewardedAd();
+      this.logRewarded('failed', { phase: 'show', reason: 'not_loaded' });
+      return 'unavailable';
+    }
+
+    return new Promise((resolve) => {
+      const ad = this.rewarded;
+      if (!ad) {
+        this.logRewarded('failed', { phase: 'show', reason: 'missing_instance' });
+        resolve('unavailable');
+        return;
+      }
+
+      let earned = false;
+
+      const unsubscribeEarned = ad.addAdEventListener(RewardedAdEventType.EARNED_REWARD, (reward) => {
+        earned = true;
+        recordRewardedCompletion();
+        this.logRewarded('earned', {
+          type: reward.type,
+          amount: reward.amount,
+          completions: getRewardedPolicyState().completions,
+        });
+      });
+
+      const unsubscribeClosed = ad.addAdEventListener(AdEventType.CLOSED, () => {
+        unsubscribeEarned();
+        unsubscribeClosed();
+        unsubscribeError();
+        this.rewardedLoaded = false;
+        this.rewarded = null;
+        this.preloadRewardedAd();
+        resolve(earned ? 'earned' : 'closed');
+      });
+
+      const unsubscribeError = ad.addAdEventListener(AdEventType.ERROR, (error) => {
+        unsubscribeEarned();
+        unsubscribeClosed();
+        unsubscribeError();
+        this.logRewarded('failed', {
+          phase: 'show',
+          message: error.message,
+          code: (error as Error & { code?: string | number }).code ?? null,
+        });
+        this.rewardedLoaded = false;
+        this.rewarded = null;
+        this.preloadRewardedAd();
+        resolve('failed');
+      });
+
+      try {
+        this.logRewarded('shown', {});
+        ad.show();
+      } catch (error) {
+        unsubscribeEarned();
+        unsubscribeClosed();
+        unsubscribeError();
+        this.logRewarded('failed', {
+          phase: 'show',
+          message: error instanceof Error ? error.message : String(error),
+        });
+        this.rewardedLoaded = false;
+        this.rewarded = null;
+        this.preloadRewardedAd();
+        resolve('failed');
+      }
+    });
   }
 
   async tryShowInterstitial(trigger: InterstitialTrigger, pathname: string): Promise<boolean> {
@@ -117,13 +210,55 @@ class AdsService {
     });
   }
 
-  /** Rewarded ads are intentionally disabled until product enables them. */
+  /** Preloads rewarded ads for optional download prompts. */
   prepareRewardedAds(): void {
-    if (!adsConfig.rewardedEnabled || this.rewardedPrepared || !isAdsSupportedPlatform()) return;
+    this.preloadRewardedAd();
+  }
+
+  private logRewarded(
+    event: 'loaded' | 'shown' | 'earned' | 'failed',
+    details?: Record<string, unknown>,
+  ): void {
+    if (details && Object.keys(details).length > 0) {
+      console.log(`[Ads] rewarded ${event}`, details);
+      return;
+    }
+    console.log(`[Ads] rewarded ${event}`);
+  }
+
+  private preloadRewardedAd(): void {
+    if (!adsConfig.rewardedEnabled || !isAdsSupportedPlatform()) return;
+    if (this.rewardedLoading || this.rewardedLoaded) return;
+
     const unitId = adsConfig.units.rewardedAndroid;
     if (!unitId) return;
-    RewardedAd.createForAdRequest(unitId);
-    this.rewardedPrepared = true;
+
+    this.rewardedLoading = true;
+    const ad = RewardedAd.createForAdRequest(unitId);
+    this.rewarded = ad;
+
+    const unsubscribeLoaded = ad.addAdEventListener(RewardedAdEventType.LOADED, () => {
+      unsubscribeLoaded();
+      unsubscribeError();
+      this.rewardedLoaded = true;
+      this.rewardedLoading = false;
+      this.logRewarded('loaded');
+    });
+
+    const unsubscribeError = ad.addAdEventListener(AdEventType.ERROR, (error) => {
+      unsubscribeLoaded();
+      unsubscribeError();
+      this.rewardedLoading = false;
+      this.rewardedLoaded = false;
+      this.rewarded = null;
+      this.logRewarded('failed', {
+        phase: 'load',
+        message: error.message,
+        code: (error as Error & { code?: string | number }).code ?? null,
+      });
+    });
+
+    ad.load();
   }
 
   private async bootstrap(): Promise<void> {

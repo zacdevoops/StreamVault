@@ -56,7 +56,12 @@ export const adsConfig = {
     cooldownMs: 3 * 60 * 1000,
     sessionCap: 3,
   },
-  rewardedEnabled: false,
+  rewardedEnabled: (() => {
+    const flag = readPublicEnv(process.env.EXPO_PUBLIC_ADS_REWARDED_ENABLED)?.toLowerCase();
+    if (flag === 'false' || flag === '0') return false;
+    if (flag === 'true' || flag === '1') return true;
+    return resolveAndroidEnabled();
+  })(),
 } as const;
 
 export function isAdsSupportedPlatform(): boolean {

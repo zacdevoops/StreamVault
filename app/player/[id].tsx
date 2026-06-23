@@ -45,9 +45,10 @@ import { SkeletonCard } from '@/components/SkeletonCard';
 import { useLibraryStore } from '@/stores/libraryStore';
 import { saveToHistory, saveLiked, deleteLiked, saveSaved, deleteSaved, saveDownload } from '@/services/database';
 import { Colors, Spacing, Typography, FontSizes, Radius } from '@/constants/theme';
-import { DownloadFormat, DownloadItem, VideoDetail } from '@/types';
+import { DownloadFormat, DownloadItem } from '@/types';
 import { useDownloadStore } from '@/stores/downloadStore';
 import { usePlayerStore } from '@/stores/playerStore';
+import { runDownloadWithRewardedPrompt } from '@/services/ads/downloadRewardedFlow';
 import { useConfigStore } from '@/stores/configStore';
 import { useGlobalVideo } from '@/contexts/VideoContext';
 import { type GlobalVideoTrack } from '@/services/GlobalVideoManager';
@@ -444,6 +445,11 @@ export default function PlayerScreen() {
     }
   };
 
+  const handleFormatSelect = (format: DownloadFormat) => {
+    setShowFormatPicker(false);
+    void runDownloadWithRewardedPrompt(() => handleDownload(format));
+  };
+
   const handleLike = async () => {
     if (!video) return;
     const thumbnail = getBestThumbnail(video.videoThumbnails ?? []);
@@ -808,7 +814,7 @@ export default function PlayerScreen() {
       <FormatPicker
         visible={showFormatPicker}
         onClose={() => setShowFormatPicker(false)}
-        onSelect={handleDownload}
+        onSelect={handleFormatSelect}
         title={video?.title ?? ''}
         downloading={activeDownloadFormat}
       />
