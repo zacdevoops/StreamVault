@@ -262,6 +262,7 @@ class AdsService {
   }
 
   private async bootstrap(): Promise<void> {
+    this.logStartupUnitIds();
     this.consent = await prepareAdsConsent();
     if (!this.consent.canRequestAds) {
       if (__DEV__) console.warn('[AdsService] Ads blocked until consent is obtained');
@@ -288,6 +289,10 @@ class AdsService {
     if (this.initialized === value) return;
     this.initialized = value;
     this.initListeners.forEach((listener) => listener());
+  }
+
+  private logStartupUnitIds(): void {
+    console.log('[Ads] rewarded unit id', adsConfig.units.rewardedAndroid || '(empty)');
   }
 
   private logAdapterStatuses(statuses: AdapterStatusList): void {

@@ -29,6 +29,14 @@ function resolveAndroidEnabled(): boolean {
 
 const adsMode = resolveAdsMode();
 
+/** Static reads required for Expo Metro inlining in release bundles. */
+const ENV_ADMOB_BANNER_HOME_ANDROID = process.env.EXPO_PUBLIC_ADMOB_BANNER_HOME_ANDROID;
+const ENV_ADMOB_BANNER_SEARCH_ANDROID = process.env.EXPO_PUBLIC_ADMOB_BANNER_SEARCH_ANDROID;
+const ENV_ADMOB_INTERSTITIAL_ANDROID = process.env.EXPO_PUBLIC_ADMOB_INTERSTITIAL_ANDROID;
+const ENV_ADMOB_REWARDED_ANDROID = process.env.EXPO_PUBLIC_ADMOB_REWARDED_ANDROID;
+
+const useTestAdUnitFallback = __DEV__ || adsMode === 'test';
+
 export const adsConfig = {
   mode: adsMode,
   androidEnabled: resolveAndroidEnabled(),
@@ -40,17 +48,17 @@ export const adsConfig = {
   },
   units: {
     bannerHomeAndroid:
-      readPublicEnv(process.env.EXPO_PUBLIC_ADMOB_BANNER_HOME_ANDROID)
-      ?? (__DEV__ || adsMode === 'test' ? TestIds.ADAPTIVE_BANNER : ''),
+      readPublicEnv(ENV_ADMOB_BANNER_HOME_ANDROID)
+      ?? (useTestAdUnitFallback ? TestIds.ADAPTIVE_BANNER : ''),
     bannerSearchAndroid:
-      readPublicEnv(process.env.EXPO_PUBLIC_ADMOB_BANNER_SEARCH_ANDROID)
-      ?? (__DEV__ || adsMode === 'test' ? TestIds.ADAPTIVE_BANNER : ''),
+      readPublicEnv(ENV_ADMOB_BANNER_SEARCH_ANDROID)
+      ?? (useTestAdUnitFallback ? TestIds.ADAPTIVE_BANNER : ''),
     interstitialAndroid:
-      readPublicEnv(process.env.EXPO_PUBLIC_ADMOB_INTERSTITIAL_ANDROID)
-      ?? (__DEV__ || adsMode === 'test' ? TestIds.INTERSTITIAL : ''),
+      readPublicEnv(ENV_ADMOB_INTERSTITIAL_ANDROID)
+      ?? (useTestAdUnitFallback ? TestIds.INTERSTITIAL : ''),
     rewardedAndroid:
-      readPublicEnv(process.env.EXPO_PUBLIC_ADMOB_REWARDED_ANDROID)
-      ?? (__DEV__ || adsMode === 'test' ? TestIds.REWARDED : ''),
+      readPublicEnv(ENV_ADMOB_REWARDED_ANDROID)
+      ?? (useTestAdUnitFallback ? TestIds.REWARDED : ''),
   },
   interstitial: {
     cooldownMs: 3 * 60 * 1000,
