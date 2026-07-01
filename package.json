@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "android": "expo run:android",
     "android:release": "NODE_ENV=production expo run:android --variant release",
-    "android:release:apk": "NODE_ENV=production bash -c 'cd android && ./gradlew assembleRelease'",
+    "android:release:apk": "NODE_ENV=production bash -c 'cd android && ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a'",
     "ios": "expo run:ios",
     "test": "jest --passWithNoTests",
     "postinstall": "node scripts/apply-native-patches.js",

@@ -40,7 +40,7 @@
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
-        "backgroundColor": "#080808"
+        "backgroundColor": "#F32F30"
       },
       "permissions": [
         "INTERNET",
@@ -80,7 +80,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#080808",
+          "backgroundColor": "#F32F30",
           "image": "./assets/images/icon.png",
           "imageWidth": 120
         }
